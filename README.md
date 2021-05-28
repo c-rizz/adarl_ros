@@ -1,5 +1,5 @@
 ## Branches
-These instructions assume you want to use tensorflow/stable_baselines2, you you want to use pytorch and stable_baselines3 
+These instructions assume you want to use tensorflow/stable_baselines2, if you want to use pytorch and stable_baselines3 
 please check out the noetic-sb3 branch.
 For the latest (unstable) version you can check the crzz-dev-noetic branch.
 
