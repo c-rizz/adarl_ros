@@ -5,8 +5,6 @@ Class implementing Gazebo-based gym cartpole environment.
 Based on ControlledEnv
 """
 
-import rospy
-import rospy.client
 
 import gym
 import numpy as np
@@ -205,7 +203,7 @@ class HopperVisualEnv(HopperEnv):
             self._environmentController.step()
             img = self._environmentController.getRenderings(["camera"])[0]
             if img is None:
-                rospy.logerr("No camera image received. Observation will contain and empty image.")
+                ggLog.error("No camera image received. Observation will contain and empty image.")
                 img = np.empty([self._obs_img_height, self._obs_img_width,3])
             img = self._reshapeFrame(img)
             self._stackedImg[i] = img
@@ -220,7 +218,7 @@ class HopperVisualEnv(HopperEnv):
         self.initializeEpisode()
         img = self._environmentController.getRenderings(["camera"])[0]
         if img is None:
-            rospy.logerr("No camera image received. Observation will contain and empty image.")
+            ggLog.error("No camera image received. Observation will contain and empty image.")
             img = np.empty([self._obs_img_height, self._obs_img_width,3])
         img = self._reshapeFrame(img)
         for i in range(self._frame_stacking_size):

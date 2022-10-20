@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """This file implements PandaMoveitReachingEnv."""
 
-import rospy
-import rospy.client
 
 import gym
 import numpy as np
@@ -11,8 +9,6 @@ from nptyping import NDArray
 import quaternion
 import lr_gym_utils.msg
 import lr_gym_utils.srv
-from geometry_msgs.msg import PoseStamped
-import actionlib
 import rospkg
 
 from lr_gym.envs.ControlledEnv import ControlledEnv
@@ -21,9 +17,7 @@ from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController
 
 import lr_gym_utils.ros_launch_utils
 import lr_gym.utils.dbg.ggLog as ggLog
-import math
 from lr_gym.utils.utils import JointState, LinkState
-import time
 
 
 class PandaMoveitPickEnv(ControlledEnv):

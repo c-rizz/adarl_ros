@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-import rospy
 import time
 import tqdm
-from typing import Tuple
 import inspect
 import numpy as np
 from nptyping import NDArray
@@ -11,16 +9,11 @@ from nptyping import NDArray
 from stable_baselines3.td3.policies import MlpPolicy
 from stable_baselines3 import TD3
 from stable_baselines3.common.noise import NormalActionNoise
-from lr_gym.envs.CartpoleContinuousEnv import CartpoleContinuousEnv
-from lr_gym.envs.CartpoleNoisyContinuousEnv import CartpoleNoisyContinuousEnv
 from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 from lr_gym.envs.ObsDict2FlatBox import ObsDict2FlatBox
 import lr_gym.utils.dbg.ggLog as ggLog
-import gym
-import datetime
 import lr_gym.utils.utils
 
-from dm_control import suite
 from lr_gym.envs.GymToLr import GymToLr
 import dmc2gym.wrappers
 

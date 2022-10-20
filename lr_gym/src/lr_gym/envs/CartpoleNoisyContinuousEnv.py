@@ -6,8 +6,6 @@ Based on ControlledEnv
 """
 
 
-import rospy
-import gym
 from typing import Tuple
 import numpy as np
 from lr_gym.envs.CartpoleContinuousEnv import CartpoleContinuousEnv

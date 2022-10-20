@@ -5,9 +5,6 @@ Class implementing Gazebo-based gym cartpole environment.
 Based on ControlledEnv
 """
 
-import rospy
-import rospy.client
-
 import gym
 import numpy as np
 from typing import Tuple, Dict, Any
@@ -18,7 +15,6 @@ import rospkg
 import lr_gym.utils.PyBulletUtils as PyBulletUtils
 from lr_gym.envs.ControlledEnv import ControlledEnv
 from lr_gym.envControllers.EnvironmentController import EnvironmentController
-from lr_gym.envControllers.GazeboController import GazeboController
 from lr_gym.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
 #import tf2_py
 import lr_gym.utils

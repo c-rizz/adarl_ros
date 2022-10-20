@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import rospy
 import time
 import tqdm
 from stable_baselines3.dqn import MlpPolicy

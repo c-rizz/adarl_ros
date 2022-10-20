@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-import rospy
 import time
 import tqdm
-from typing import Tuple
 import inspect
 import numpy as np
 from nptyping import NDArray
@@ -14,8 +12,6 @@ from lr_gym.envs.CartpoleContinuousEnv import CartpoleContinuousEnv
 from lr_gym.envs.CartpoleNoisyContinuousEnv import CartpoleNoisyContinuousEnv
 from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 import lr_gym.utils.dbg.ggLog as ggLog
-import gym
-import datetime
 import lr_gym.utils.utils
 
 def main(obsNoise : NDArray[(4,),np.float32]) -> None: 

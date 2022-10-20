@@ -6,14 +6,11 @@ Based on ControlledEnv
 """
 
 
-import rospy
-import rospy.client
 
 import gym
 import numpy as np
 from typing import Tuple
 
-from lr_gym.envs.CartpoleEnv import CartpoleEnv
 from lr_gym.envs.CartpoleContinuousVisualEnv import CartpoleContinuousVisualEnv
 import lr_gym.utils.dbg.ggLog as ggLog
 

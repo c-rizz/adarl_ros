@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 
-import rospy
 import time
 import tqdm
 from stable_baselines3 import A2C
 from lr_gym.envs.CartpoleEnv import CartpoleEnv
 import stable_baselines3
-import multiprocessing
-from lr_gym.envControllers.GazeboController import GazeboController
 from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 import argparse
-from pyvirtualdisplay import Display
 
 def main() -> None:
     """Solves the gazebo cartpole environment using the DQN implementation by stable-baselines.

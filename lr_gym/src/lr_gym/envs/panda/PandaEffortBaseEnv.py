@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """This file implements PandaEffortKeepPoseEnvironment."""
 
-import rospy
-import rospy.client
 
 import gym
 import numpy as np
 from typing import Tuple
 from nptyping import NDArray
 import quaternion
-import math
 
 from lr_gym.envs.ControlledEnv import ControlledEnv
 from lr_gym.envControllers.EffortRosControlController import EffortRosControlController

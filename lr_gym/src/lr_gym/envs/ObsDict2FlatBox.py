@@ -5,8 +5,6 @@ Base-class for cresting GAzebo-based gym environments.
 The provided class must be extended to define a specific environment
 """
 
-import rospy
-import rospy.client
 import gym
 import numpy as np
 import lr_gym.utils

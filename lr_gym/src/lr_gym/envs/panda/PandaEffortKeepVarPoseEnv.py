@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """This file implements PandaEffortKeepPoseEnvironment."""
 
-import rospy
 
 import numpy as np
 import gym
@@ -89,7 +88,7 @@ class PandaEffortKeepVarPoseEnv(PandaEffortKeepPoseEnv):
         self._goalTolerancePosition = goalTolerancePosition
         self._goalToleranceOrientation_rad = goalToleranceOrientation_rad
 
-        self._dbgGoalpublisher = rospy.Publisher('~/goal_pose', PoseStamped, queue_size=10)
+        # self._dbgGoalpublisher = rospy.Publisher('~/goal_pose', PoseStamped, queue_size=10)
 
 
 
@@ -140,7 +139,7 @@ class PandaEffortKeepVarPoseEnv(PandaEffortKeepPoseEnv):
         goalPoseStamped.pose.orientation.y = self._goalPose[5]
         goalPoseStamped.pose.orientation.z = self._goalPose[6]
         goalPoseStamped.pose.orientation.w = self._goalPose[3]
-        self._dbgGoalpublisher.publish(goalPoseStamped)
+        # self._dbgGoalpublisher.publish(goalPoseStamped)
         print("Setting goal to: "+str(self._goalPose))
 
     def getState(self) -> NDArray[(26,), np.float32]:

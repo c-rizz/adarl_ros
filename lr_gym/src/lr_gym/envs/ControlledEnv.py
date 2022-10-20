@@ -5,12 +5,6 @@ Base-class for cresting GAzebo-based gym environments.
 The provided class must be extended to define a specific environment
 """
 
-import rospy
-import rospy.client
-
-import numpy as np
-import lr_gym.utils
-
 from lr_gym.envControllers.GazeboController import GazeboController
 from lr_gym.envs.BaseEnv import BaseEnv
 

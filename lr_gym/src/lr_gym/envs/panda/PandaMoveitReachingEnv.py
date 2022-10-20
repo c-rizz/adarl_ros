@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """This file implements PandaMoveitReachingEnv."""
 
-import rospy
-import rospy.client
 
 import gym
 import numpy as np
@@ -11,15 +9,12 @@ from nptyping import NDArray
 import quaternion
 import lr_gym_utils.msg
 import lr_gym_utils.srv
-from geometry_msgs.msg import PoseStamped
-import actionlib
 import rospkg
 
 from lr_gym.envs.ControlledEnv import ControlledEnv
 from lr_gym.envControllers.MoveitRosController import MoveitRosController
 import lr_gym_utils.ros_launch_utils
 import lr_gym.utils.dbg.ggLog as ggLog
-import math
 
 
 class PandaMoveitReachingEnv(ControlledEnv):
@@ -270,7 +265,6 @@ class PandaMoveitReachingEnv(ControlledEnv):
     def performReset(self) -> None:
         super().performReset()
         self._environmentController.resetWorld()
-        self._lastResetSimTime = rospy.get_time()
 
 
     def getObservation(self, state) -> np.ndarray:
@@ -346,4 +340,4 @@ class PandaMoveitReachingEnv(ControlledEnv):
         self._mmRosLauncher.stop()
 
     def getSimTimeFromEpStart(self):
-        return rospy.get_time() - self._lastResetSimTime
+        return self._environmentController.getEnvSimTimeFromStart()
