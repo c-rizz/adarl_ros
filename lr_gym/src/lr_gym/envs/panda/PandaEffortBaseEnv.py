@@ -12,7 +12,6 @@ from lr_gym.envs.ControlledEnv import ControlledEnv
 from lr_gym.envControllers.EffortRosControlController import EffortRosControlController
 import lr_gym
 import lr_gym_utils.ros_launch_utils
-import rospkg
 
 
 
@@ -235,11 +234,13 @@ class PandaEffortBaseEnv(ControlledEnv):
         if backend != "gazebo":
             raise NotImplementedError("Backend "+backend+" not supported")
 
-        self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path("lr_gym")+"/launch/launch_panda.launch", cli_args=["gui:=false", "load_gripper:=false","gazebo_seed:="+str(self._envSeed)])
-        self._mmRosLauncher.launchAsync()
+        self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/launch_panda.launch"),
+                                                    launch_file_args={  "gui":"false",
+                                                                        "gazebo_seed":f"{self._envSeed}",
+                                                                        "load_gripper":"false"})
 
     def _destroySimulation(self):
-        self._mmRosLauncher.stop()
+        self._environmentController.destroy_scenario()
 
     def _normalizedJointPositions(self, state):
         jnt_positions = np.array([state[i] for i in range(6,6+7)])

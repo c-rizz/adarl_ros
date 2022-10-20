@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 import traceback
-from typing import List
-from typing import Tuple
-from typing import Dict
+from typing import List, Tuple, Dict, Any
 import time
 import gazebo_msgs
 import gazebo_msgs.srv
@@ -20,7 +18,7 @@ import os
 import lr_gym.utils.dbg.ggLog as ggLog
 from lr_gym.utils.utils import Pose
 from lr_gym.utils.gazebo_models_manager import delete_model, spawn_model
-
+import rospkg
 
 class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, SimulatedEnvController):
     """This class allows to control the execution of a Gazebo simulation.
@@ -374,22 +372,22 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
     def setRosMasterUri(self, rosMasterUri : str):
         self._rosMasterUri = rosMasterUri
 
-    def spawnModel(self, xacro_file_path : str,
-                        pose : Pose = Pose(0,0,0,0,0,0,1), 
-                        args : Dict[str,str] = {}, 
-                        model_name = "model", 
-                        robot_namespace = "", 
-                        reference_frame = "world",
-                        format = "urdf"):
-        """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
-        """
-        spawn_model(xacro_file_path = xacro_file_path,
-                        pose = pose, 
-                        args = args, 
-                        model_name = model_name, 
-                        robot_namespace = robot_namespace, 
-                        reference_frame = reference_frame,
-                        format = format)
+    # def spawnModel(self, xacro_file_path : str,
+    #                     pose : Pose = Pose(0,0,0,0,0,0,1), 
+    #                     args : Dict[str,str] = {}, 
+    #                     model_name = "model", 
+    #                     robot_namespace = "", 
+    #                     reference_frame = "world",
+    #                     format = "urdf"):
+    #     """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
+    #     """
+    #     spawn_model(xacro_file_path = xacro_file_path,
+    #                     pose = pose, 
+    #                     args = args, 
+    #                     model_name = model_name, 
+    #                     robot_namespace = robot_namespace, 
+    #                     reference_frame = reference_frame,
+    #                     format = format)
 
 
     def deleteModel(self, model : str):
@@ -459,3 +457,21 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             ggLog.error(f"GazeboControllerNoPlugin: failed to setup Light.\n req = {gz_req}\n res={res}")
             return False
         return True
+
+    
+    def build_scenario(self, launch_file_pkg_and_path : Tuple[str,str],
+                             launch_file_args : Dict[str,str]):
+        
+        super().build_scenario(launch_file_pkg_and_path=launch_file_pkg_and_path, launch_file_args=launch_file_args)
+        self.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
+
+    
+    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any]):
+        spawn_model(rospkg.RosPack().get_path(model_definition[0])+model_definition[1],
+                    pose=pose,
+                    model_name=model_name,
+                    args=model_kwargs)
+
+    def delete_model(self, model_name : str):
+        """Delete a model from the environment"""
+        delete_model(model_name=model_name)

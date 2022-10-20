@@ -1,21 +1,20 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple
-from lr_gym.utils.utils import JointState, LinkState
-import gazebo_msgs
+from typing import Dict, Tuple, Any
+from lr_gym.utils.utils import JointState, LinkState, Pose
 
 
 
 class SimulatedEnvController(ABC):
-    @abstractmethod
-    def spawnModel(self):
-        """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
-        """
-        raise NotImplementedError()
+    # @abstractmethod
+    # def spawnModel(self):
+    #     """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
+    #     """
+    #     raise NotImplementedError()
 
-    @abstractmethod
-    def deleteModel(self, model : str):
-        """Delete a model from the environment"""
-        raise NotImplementedError()
+    # @abstractmethod
+    # def deleteModel(self, model : str):
+    #     """Delete a model from the environment"""
+    #     raise NotImplementedError()
 
     @abstractmethod
     def setJointsStateDirect(self, jointStates : Dict[Tuple[str,str],JointState]):
@@ -41,4 +40,12 @@ class SimulatedEnvController(ABC):
 
     @abstractmethod
     def setupLight(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def spawn_model(self, model_definition : Any, model_name : str, pose : Pose, model_kwargs : Dict[Any,Any]):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def delete_model(self, model_name : str):
         raise NotImplementedError()

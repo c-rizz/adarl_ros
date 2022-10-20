@@ -16,7 +16,6 @@ from lr_gym.envs.CartpoleEnv import CartpoleEnv
 import lr_gym.utils
 import cv2
 import lr_gym.utils.dbg.ggLog as ggLog
-import rospkg
 import lr_gym_utils
 from lr_gym.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
 import lr_gym.utils.gazebo_models_manager as gazebo_models_manager
@@ -237,10 +236,10 @@ class CartpoleContinuousVisualEnv(CartpoleEnv):
         camera_args = { "camera_width": sim_img_width,
                         "camera_height": sim_img_height}
                       
-        gazebo_models_manager.spawn_model(  rospkg.RosPack().get_path("lr_gym")+"/models/camera.urdf.xacro",
-                                            pose=Pose(0,0,0,0,0,0,1),
-                                            model_name="camera",
-                                            args=camera_args) 
+        self._environmentController.spawn_model(model_definition=("lr_gym","/models/camera.urdf.xacro"),
+                                                pose=Pose(0,0,0,0,0,0,1),
+                                                model_name="camera",
+                                                model_kwargs=camera_args) 
         ggLog.info("Spawned camera")
 
 
@@ -271,7 +270,7 @@ class CartpoleContinuousVisualEnv(CartpoleEnv):
 
         model_name = "cartpole_v0"
         if self._already_built_cartpole:
-            gazebo_models_manager.delete_model(model_name)
+            self._environmentController.delete_model(model_name)
         self._already_built_cartpole = True
 
         if self._randomize:
@@ -317,10 +316,10 @@ class CartpoleContinuousVisualEnv(CartpoleEnv):
         args.update(color_args)
 
 
-        gazebo_models_manager.spawn_model(  rospkg.RosPack().get_path("lr_gym")+"/models/cartpole_v0.urdf.xacro",
-                                            pose=Pose(0,0,0,0,0,0,1),
-                                            model_name=model_name,
-                                            args=args)
+        self._environmentController.spawn_model(model_definition=("lr_gym","/models/cartpole_v0.urdf.xacro"),
+                                                pose=Pose(0,0,0,0,0,0,1),
+                                                model_name=model_name,
+                                                model_kwargs=args)
 
     def buildSimulation(self, backend : str = "gazebo"):
         if backend != "gazebo":
@@ -329,19 +328,14 @@ class CartpoleContinuousVisualEnv(CartpoleEnv):
 
         # ggLog.info(f"sim_img_width  = {sim_img_width}")
         # ggLog.info(f"sim_img_height = {sim_img_height}")
+        worldpath = "\"$(find lr_gym)/worlds/ground_plane_world_plugin.world\""
+        self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/gazebo_server.launch"),
+                                                    launch_file_args={  "gui":"false",
+                                                                        "paused":"true",
+                                                                        "physics_engine":"bullet",
+                                                                        "limit_sim_speed":"false",
+                                                                        "world_name":worldpath,
+                                                                        "gazebo_seed":f"{self._envSeed}",
+                                                                        "wall_sim_speed":f"{self._wall_sim_speed}"})
 
-
-
-        self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path("lr_gym")+"/launch/gazebo_server.launch",
-                                                                                      cli_args=[f"gui:=false",
-                                                                                                f"paused:=true",
-                                                                                                f"physics_engine:=bullet",
-                                                                                                f"limit_sim_speed:=false",
-                                                                                                f"world_name:={rospkg.RosPack().get_path('lr_gym')}/worlds/ground_plane_world_plugin.world",
-                                                                                                f"gazebo_seed:={self._envSeed}",
-                                                                                                f"wall_sim_speed:={self._wall_sim_speed}"])
-        self._mmRosLauncher.launchAsync()
-        
-        if isinstance(self._environmentController, GazeboControllerNoPlugin):
-            self._environmentController.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
 

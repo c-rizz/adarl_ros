@@ -9,7 +9,6 @@ from nptyping import NDArray
 import quaternion
 import lr_gym_utils.msg
 import lr_gym_utils.srv
-import rospkg
 
 from lr_gym.envs.ControlledEnv import ControlledEnv
 from lr_gym.envControllers.MoveitRosController import MoveitRosController
@@ -318,26 +317,21 @@ class PandaMoveitReachingEnv(ControlledEnv):
 
     def buildSimulation(self, backend : str = "gazebo"):
         if backend == "gazebo":
-            self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher( rospkg.RosPack().get_path("lr_gym")+
-                                                                                            "/launch/launch_panda_moveit.launch",
-                                                                                            cli_args=["gui:=false", "load_gripper:=false"])
-            self._mmRosLauncher.launchAsync()
-
+            self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/launch_panda_moveit.launch"),
+                                                        launch_file_args={  "gui":"false",
+                                                                            "load_gripper":"false"})
         elif backend == "real":
-            self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher( rospkg.RosPack().get_path("lr_gym")+
-                                                                                            "/launch/launch_panda_moveit.launch",
-                                                                                            cli_args=[  "simulated:=false",
-                                                                                                        "robot_ip:="+self._real_robot_ip,
-                                                                                                        "control_mode:=position"],
-                                                                                            basePort = 11311,
-                                                                                            ros_master_ip = "127.0.0.1")
-            self._mmRosLauncher.launchAsync()
+            self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/launch_panda_moveit.launch"),
+                                                        launch_file_args={  "robot_ip":self._real_robot_ip,
+                                                                            "simulated":"false",
+                                                                            "control_mode":"position"},
+                                                        basePort = 11311,
+                                                        ros_master_ip = self._real_robot_pc_ip)
         else:
-            raise NotImplementedError("Backend "+backend+" not supported")
-
+            raise NotImplementedError("Backend '"+backend+"' not supported")
 
     def _destroySimulation(self):
-        self._mmRosLauncher.stop()
+        self._environmentController.destroy_scenario()
 
     def getSimTimeFromEpStart(self):
         return self._environmentController.getEnvSimTimeFromStart()

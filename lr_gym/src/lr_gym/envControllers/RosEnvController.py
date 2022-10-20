@@ -4,12 +4,13 @@ from typing import Tuple
 from typing import Dict
 
 import sensor_msgs
-import gazebo_msgs.msg
 from threading import Lock
 
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 from lr_gym.envControllers.EnvironmentController import EnvironmentController
 from lr_gym_utils.msg import LinkStates
+import lr_gym_utils
+import rospkg
 
 import rospy
 import lr_gym
@@ -18,7 +19,7 @@ import time
 import lr_gym.utils.dbg.ggLog as ggLog
 import lr_gym.utils.utils
 import lr_gym.utils.beep
-
+import lr_gym_utils.ros_launch_utils
 
 
 class RosEnvController(EnvironmentController):
@@ -61,6 +62,7 @@ class RosEnvController(EnvironmentController):
 
         self._maxObsAge = maxObsDelay
         self._blocking_observation = blocking_observation
+        self._mmRosLauncher = None
 
 
     def step(self) -> float:
@@ -382,3 +384,19 @@ class RosEnvController(EnvironmentController):
 
     def freerun(self, duration_sec : float):
         rospy.sleep(duration_sec)
+
+    def build_scenario(self, launch_file_pkg_and_path : Tuple[str,str],
+                             launch_file_args : Dict[str,str],
+                             basePort = 11350,
+                             ros_master_ip = "127.0.0.1"):
+        
+        self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+launch_file_pkg_and_path[1],
+                                                                                    cli_args=[f"{k}:={v}" for k,v in launch_file_args.items()],
+                                                                                    basePort = basePort,
+                                                                                    ros_master_ip = ros_master_ip)
+        self._mmRosLauncher.launchAsync()
+
+
+    def destroy_scenario(self):
+        if self._mmRosLauncher is not None:
+            self._mmRosLauncher.stop()

@@ -78,10 +78,10 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         self._gazeboController._makeRosConnections()
 
 
-    def spawnModel(self, **kw):
-        """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
-        """
-        self._gazeboController.spawnModel(**kw)
+    # def spawnModel(self, **kw):
+    #     """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
+    #     """
+    #     self._gazeboController.spawnModel(**kw)
 
 
     def deleteModel(self, model : str):

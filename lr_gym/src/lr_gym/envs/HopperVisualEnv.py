@@ -13,7 +13,6 @@ from nptyping import NDArray
 import cv2
 
 import lr_gym_utils.ros_launch_utils
-import rospkg
 import lr_gym.utils.PyBulletUtils as PyBulletUtils
 from lr_gym.envs.HopperEnv import HopperEnv
 from lr_gym.envControllers.EnvironmentController import EnvironmentController
@@ -157,15 +156,11 @@ class HopperVisualEnv(HopperEnv):
             # simCamWidth =  int(simCamHeight*16.0/9.0)
             simCamHeight = int(64*(self._obs_img_height/64))
             simCamWidth = int(64*16/9*(self._obs_img_height/64))
-            self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path("lr_gym")+"/launch/hopper_gazebo_sim.launch",
-                                                                                           cli_args=["gui:=false",
-                                                                                                     "gazebo_seed:="+str(self._envSeed),
-                                                                                                     "camera_width:="+str(simCamWidth),
-                                                                                                     "camera_height:="+str(simCamHeight)])
-            self._mmRosLauncher.launchAsync()
-
-            if isinstance(self._environmentController, GazeboControllerNoPlugin):
-                self._environmentController.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
+            self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/hopper_gazebo_sim.launch"),
+                                                        launch_file_args={  "gui":"false",
+                                                                            "gazebo_seed":f"{self._envSeed}",
+                                                                            "camera_width":str(simCamWidth),
+                                                                            "camera_height":str(simCamHeight)})
         else:
             raise NotImplementedError("Backend "+backend+" not supported")
 

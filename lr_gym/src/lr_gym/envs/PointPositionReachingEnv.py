@@ -6,14 +6,9 @@ import numpy as np
 from typing import Callable
 from nptyping import NDArray
 import quaternion
-import lr_gym_utils.msg
-import lr_gym_utils.srv
-import rospkg
 
 from lr_gym.envs.BaseEnv import BaseEnv
-import lr_gym_utils.ros_launch_utils
 import lr_gym.utils.dbg.ggLog as ggLog
-import math
 
 
 class PointPositionReachingEnv(BaseEnv):
@@ -257,7 +252,7 @@ class PointPositionReachingEnv(BaseEnv):
 
 
     def _destroySimulation(self):
-        self._mmRosLauncher.stop()
+        self._environmentController.destroy_scenario()
 
     def getSimTimeFromEpStart(self):
         return self._simTime

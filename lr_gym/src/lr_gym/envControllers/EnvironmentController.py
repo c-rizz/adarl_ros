@@ -1,8 +1,6 @@
 """This file implements the Envitronment controller class, whic is the superclass for all th environment controllers."""
 #!/usr/bin/env python3
-from typing import List
-from typing import Tuple
-from typing import Dict
+from typing import List, Tuple, Dict, Any
 
 import sensor_msgs
 import gazebo_msgs.msg
@@ -13,6 +11,7 @@ import numpy as np
 from lr_gym.utils.utils import JointState
 from lr_gym.utils.utils import LinkState
 from abc import ABC, abstractmethod
+from lr_gym.utils.utils import Pose
 
 class EnvironmentController(ABC):
     """This class allows to control the execution of a simulation.
@@ -156,4 +155,9 @@ class EnvironmentController(ABC):
     @abstractmethod
     def freerun(self, duration_sec : float):
         """Run the environment for the specified duration"""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def build_scenario(self, **kwargs):
+        """Build and setup the environment scenario. Should be called by the environment. Arguments depend on the type of controller"""
         raise NotImplementedError()

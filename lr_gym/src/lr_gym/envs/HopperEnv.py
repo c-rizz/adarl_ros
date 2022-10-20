@@ -10,8 +10,6 @@ import numpy as np
 from typing import Tuple, Dict, Any
 from nptyping import NDArray
 
-import lr_gym_utils.ros_launch_utils
-import rospkg
 import lr_gym.utils.PyBulletUtils as PyBulletUtils
 from lr_gym.envs.ControlledEnv import ControlledEnv
 from lr_gym.envControllers.EnvironmentController import EnvironmentController
@@ -19,7 +17,8 @@ from lr_gym.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlu
 #import tf2_py
 import lr_gym.utils
 import lr_gym.utils.dbg.ggLog as ggLog
-
+import time
+from lr_gym.utils.utils import Pose
 
 class HopperEnv(ControlledEnv):
     """This class implements an OpenAI-gym environment with Gazebo, representing the classic cart-pole setup.
@@ -93,6 +92,7 @@ class HopperEnv(ControlledEnv):
 
         self._envSeed = seed
         self._useMjcfFile = useMjcfFile
+        self._spawned = False
         super().__init__(maxStepsPerEpisode = maxStepsPerEpisode,
                          stepLength_sec = stepLength_sec,
                          environmentController = simulatorController,
@@ -165,6 +165,12 @@ class HopperEnv(ControlledEnv):
 
 
     def initializeEpisode(self) -> None:
+        if not self._spawned:
+            self._environmentController.spawn_model(model_definition=("lr_gym","/models/hopper_v1.urdf.xacro"),
+                                                    model_name="hopper",
+                                                    pose=Pose(0,0,0,0,0,0,1),
+                                                    model_kwargs={"camera_width":"213","camera_height":"120"})
+            self._spawned = True
         self._environmentController.setJointsEffortCommand([  ("hopper","torso_to_thigh",0),
                                                        ("hopper","thigh_to_leg",0),
                                                        ("hopper","leg_to_foot",0)])
@@ -248,12 +254,16 @@ class HopperEnv(ControlledEnv):
 
     def buildSimulation(self, backend : str = "gazebo"):
         if backend == "gazebo":
-            self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path("lr_gym")+"/launch/hopper_gazebo_sim.launch",
-                                                                                           cli_args=["gui:=false","gazebo_seed:="+str(self._envSeed)])
-            self._mmRosLauncher.launchAsync()
-
-            if isinstance(self._environmentController, GazeboControllerNoPlugin):
-                self._environmentController.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
+            worldpath = "\"$(find lr_gym)/worlds/ground_plane_world_plugin.world\""
+            self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/gazebo_server.launch"),
+                                                        launch_file_args={  "gui":"false",
+                                                                            "paused":"true",
+                                                                            "physics_engine":"ode",
+                                                                            "limit_sim_speed":"true",
+                                                                            "world_name":worldpath,
+                                                                            "gazebo_seed":f"{self._envSeed}",
+                                                                            "wall_sim_speed":"false"})
+            # time.sleep(10)
         elif backend == "bullet":
             if self._useMjcfFile:
                 PyBulletUtils.buildSimpleEnv(rospkg.RosPack().get_path("lr_gym")+"/models/hopper_mjcf_pybullet.xml",fileFormat = "mjcf")
@@ -263,7 +273,7 @@ class HopperEnv(ControlledEnv):
             raise NotImplementedError("Backend "+backend+" not supported")
 
     def _destroySimulation(self):
-        self._mmRosLauncher.stop()
+        self._environmentController.destroy_scenario()
 
     def getInfo(self,state=None) -> Dict[Any,Any]:
         i = super().getInfo(state=state)

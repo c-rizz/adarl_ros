@@ -67,8 +67,8 @@ def main(usePyBullet : bool = False,
     env.seed(RANDOM_SEED)
     env.action_space.seed(RANDOM_SEED)
 
-    env_checker.check_env(env)
-    print("Checked environment gym compliance :)")
+    # env_checker.check_env(env)
+    # print("Checked environment gym compliance :)")
 
     n_actions = env.action_space.shape[-1]
     action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.1 * np.ones(n_actions))

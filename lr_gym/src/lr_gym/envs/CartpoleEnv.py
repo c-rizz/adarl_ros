@@ -10,13 +10,9 @@ Based on ControlledEnv
 import gym
 import numpy as np
 from typing import Tuple, Dict, Any
-import time
-import lr_gym_utils.ros_launch_utils
-import rospkg
 import lr_gym.utils.dbg.ggLog as ggLog
 
 from lr_gym.envs.ControlledEnv import ControlledEnv
-from lr_gym.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
 import lr_gym
 
 class CartpoleEnv(ControlledEnv):
@@ -160,21 +156,14 @@ class CartpoleEnv(ControlledEnv):
         if backend != "gazebo":
             raise NotImplementedError("Backend "+backend+" not supported")
 
-        self._mmRosLauncher = lr_gym_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path("lr_gym")+"/launch/cartpole_gazebo_sim.launch",
-                                                                                       cli_args=["gui:=false",
-                                                                                                "gazebo_seed:="+str(self._envSeed),
-                                                                                                "wall_sim_speed:="+str(self._wall_sim_speed)])
-        self._mmRosLauncher.launchAsync()
 
-        # ggLog.info("Launching Gazebo env...")
-        # time.sleep(10)
-        # ggLog.info("Gazebo env launched.")
-        
-        if isinstance(self._environmentController, GazeboControllerNoPlugin):
-            self._environmentController.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
+        self._environmentController.build_scenario(launch_file_pkg_and_path=("lr_gym","/launch/cartpole_gazebo_sim.launch"),
+                                                    launch_file_args={  "gui":"false",
+                                                                        "gazebo_seed":f"{self._envSeed}",
+                                                                        "wall_sim_speed":f"{self._wall_sim_speed}"})
 
     def _destroySimulation(self):
-        self._mmRosLauncher.stop()
+        self._environmentController.destroy_scenario()
 
     def getInfo(self,state=None) -> Dict[Any,Any]:
         i = super().getInfo(state=state)
