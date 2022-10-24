@@ -34,7 +34,7 @@ cd $ws_root
 mkdir src
 cd src
 
-git clone --branch crzz-dev-noetic https://gitlab.idiap.ch/learn-real/lr_gym.git
+git clone --branch crzz-dev-noetic https://gitlab.idiap.ch/learn-real/lr_gym_ros.git
 git clone --branch crzz-dev https://gitlab.idiap.ch/learn-real/lr_panda.git
 git clone --branch crzz-dev https://gitlab.idiap.ch/learn-real/lr_panda_moveit_config.git
 git clone --branch crzz-dev https://gitlab.idiap.ch/learn-real/lr_realsense.git
@@ -51,8 +51,8 @@ cd $ws_root
 if [ "$install_venv" = "y" ]; then
     echo "Creating python virtualenv..."
     sleep 3
-    src/lr_gym/lr_gym/build_virtualenv.sh sb3
-    . ./virtualenv/lr_gym_sb/bin/activate
+    src/lr_gym_ros/lr_gym_ros/build_virtualenv.sh sb3
+    . ./virtualenv/lr_gym_ros_sb/bin/activate
     sudo apt-get -y update
     sudo apt-get -y install xvfb xserver-xephyr tigervnc-standalone-server xfonts-base
 fi

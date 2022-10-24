@@ -146,7 +146,7 @@ add_dependencies(gazebo_gym_env_plugin ${PROJECT_NAME}_generate_messages_cpp )
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/lr_gym_node.cpp)
+# add_executable(${PROJECT_NAME}_node src/lr_gym_ros_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
