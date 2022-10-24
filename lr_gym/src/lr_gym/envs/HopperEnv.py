@@ -165,7 +165,7 @@ class HopperEnv(ControlledEnv):
 
 
     def initializeEpisode(self) -> None:
-        if not self._spawned:
+        if not self._spawned and isinstance(self._environmentController, GazeboControllerNoPlugin):
             self._environmentController.spawn_model(model_definition=("lr_gym","/models/hopper_v1.urdf.xacro"),
                                                     model_name="hopper",
                                                     pose=Pose(0,0,0,0,0,0,1),

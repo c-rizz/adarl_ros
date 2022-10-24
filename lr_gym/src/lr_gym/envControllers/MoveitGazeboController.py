@@ -3,33 +3,17 @@ This file implements the MoveitGazeboController class.
 """
 
 
-from typing import List
-from typing import Tuple
-from typing import Dict
-from typing import Optional
+from typing import List, Any, Tuple, Dict, Optional
 
-from lr_gym.envControllers.RosEnvController import RosEnvController
 from lr_gym.envControllers.RosEnvController import RequestFailError
 from lr_gym.envControllers.MoveitRosController import MoveitRosController
 from lr_gym.envControllers.GazeboController import GazeboController
 from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController
-from lr_gym.rosControlUtils import ControllerManagementHelper
-from lr_gym.rosControlUtils import TrajectoryControllerHelper
 
 import rospy
 import sensor_msgs
-import std_msgs
-import lr_gym_utils.msg
-import lr_gym_utils.srv
-import actionlib
-import numpy as np
-from nptyping import NDArray
-import lr_gym.utils
-import control_msgs.msg
 
-from lr_gym.utils.utils import buildPoseStamped
-import lr_gym.utils.dbg.ggLog as ggLog
-from lr_gym.utils.utils import JointState, LinkState
+from lr_gym.utils.utils import JointState, LinkState, Pose
 
 
 class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
@@ -78,15 +62,16 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         self._gazeboController._makeRosConnections()
 
 
-    # def spawnModel(self, **kw):
-    #     """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
-    #     """
-    #     self._gazeboController.spawnModel(**kw)
+    
+    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any]):
+        self._gazeboController.spawn_model(model_definition = model_definition,
+                                            pose=pose,
+                                            model_name=model_name,
+                                            args=model_kwargs)
 
-
-    def deleteModel(self, model : str):
+    def delete_model(self, model_name : str):
         """Delete a model from the environment"""
-        self._gazeboController.deleteModel(model = model)
+        self._gazeboController.delete_model(model_name = model_name)
 
     def setupLight(self, *args, **kwargs):
         self._gazeboController.setupLight(*args, **kwargs)
