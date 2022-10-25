@@ -466,11 +466,12 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         self.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
 
     
-    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any]):
+    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = "urdf"):
         spawn_model(rospkg.RosPack().get_path(model_definition[0])+model_definition[1],
                     pose=pose,
                     model_name=model_name,
-                    args=model_kwargs)
+                    args=model_kwargs,
+                    format=format)
 
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""

@@ -63,11 +63,12 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
 
 
     
-    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any]):
+    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = "urdf"):
         self._gazeboController.spawn_model(model_definition = model_definition,
                                             pose=pose,
                                             model_name=model_name,
-                                            args=model_kwargs)
+                                            model_kwargs=model_kwargs,
+                                            format=format)
 
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""
