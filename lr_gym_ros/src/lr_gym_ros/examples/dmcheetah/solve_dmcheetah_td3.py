@@ -9,12 +9,12 @@ from nptyping import NDArray
 from stable_baselines3.td3.policies import MlpPolicy
 from stable_baselines3 import TD3
 from stable_baselines3.common.noise import NormalActionNoise
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-from lr_gym_ros.envs.ObsDict2FlatBox import ObsDict2FlatBox
-import lr_gym_ros.utils.dbg.ggLog as ggLog
-import lr_gym_ros.utils.utils
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+from lr_gym.envs.ObsDict2FlatBox import ObsDict2FlatBox
+import lr_gym.utils.dbg.ggLog as ggLog
+import lr_gym.utils.utils
 
-from lr_gym_ros.envs.GymToLr import GymToLr
+from lr_gym.envs.GymToLr import GymToLr
 import dmc2gym.wrappers
 
 
@@ -32,7 +32,7 @@ def main(obsNoise : NDArray[(4,),np.float32]) -> None:
     """
 
     
-    folderName = lr_gym_ros.utils.utils.lr_gym_ros_startup(__file__, inspect.currentframe())
+    folderName = lr_gym.utils.utils.lr_gym_startup(__file__, inspect.currentframe())
 
     RANDOM_SEED=0
     # dmenv = suite.load("cheetah",

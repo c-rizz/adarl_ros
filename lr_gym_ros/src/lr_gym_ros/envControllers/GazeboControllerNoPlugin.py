@@ -11,12 +11,12 @@ import rospy
 from std_srvs.srv import Empty
 
 from lr_gym_ros.envControllers.RosEnvController import RosEnvController
-from lr_gym_ros.envControllers.JointEffortEnvController import JointEffortEnvController
-from lr_gym_ros.envControllers.SimulatedEnvController import SimulatedEnvController 
-from lr_gym_ros.utils.utils import JointState, LinkState, RequestFailError
+from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController 
+from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 import os
-import lr_gym_ros.utils.dbg.ggLog as ggLog
-from lr_gym_ros.utils.utils import Pose
+import lr_gym.utils.dbg.ggLog as ggLog
+from lr_gym.utils.utils import Pose
 from lr_gym_ros.utils.gazebo_models_manager import delete_model, spawn_model
 import rospkg
 

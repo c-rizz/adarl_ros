@@ -6,8 +6,8 @@ from typing import Dict
 import sensor_msgs
 from threading import Lock
 
-from lr_gym_ros.utils.utils import JointState, LinkState, RequestFailError
-from lr_gym_ros.envControllers.EnvironmentController import EnvironmentController
+from lr_gym.utils.utils import JointState, LinkState, RequestFailError
+from lr_gym.envControllers.EnvironmentController import EnvironmentController
 from lr_gym_ros_utils.msg import LinkStates
 import lr_gym_ros_utils
 import rospkg
@@ -16,9 +16,9 @@ import rospy
 import lr_gym_ros
 import os
 import time
-import lr_gym_ros.utils.dbg.ggLog as ggLog
-import lr_gym_ros.utils.utils
-import lr_gym_ros.utils.beep
+import lr_gym.utils.dbg.ggLog as ggLog
+import lr_gym.utils.utils
+import lr_gym.utils.beep
 import lr_gym_ros_utils.ros_launch_utils
 
 
@@ -52,13 +52,13 @@ class RosEnvController(EnvironmentController):
         self._jointStatesMutex = Lock() #To synchronize _jointStateCallback with getJointsState
         self._linkStatesMutex = Lock() #To synchronize _jointStateCallback with getJointsState
 
-        self._jointStateMsgAgeAvg = lr_gym_ros.utils.utils.AverageKeeper(bufferSize = 100)
-        self._linkStateMsgAgeAvg = lr_gym_ros.utils.utils.AverageKeeper(bufferSize = 100)
-        self._cameraMsgAgeAvg = lr_gym_ros.utils.utils.AverageKeeper(bufferSize = 100)
+        self._jointStateMsgAgeAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
+        self._linkStateMsgAgeAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
+        self._cameraMsgAgeAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
 
-        self._cameraMsgWaitAvg = lr_gym_ros.utils.utils.AverageKeeper(bufferSize = 100)
-        self._linkMsgWaitAvg = lr_gym_ros.utils.utils.AverageKeeper(bufferSize = 100)
-        self._jointMsgWaitAvg = lr_gym_ros.utils.utils.AverageKeeper(bufferSize = 100)
+        self._cameraMsgWaitAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
+        self._linkMsgWaitAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
+        self._jointMsgWaitAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
 
         self._maxObsAge = maxObsDelay
         self._blocking_observation = blocking_observation
@@ -142,7 +142,7 @@ class RosEnvController(EnvironmentController):
                 time.sleep(1)
 
         rospy.init_node('ros_env_controller', anonymous=True)
-        lr_gym_ros.utils.utils.setupSigintHandler()
+        lr_gym.utils.utils.setupSigintHandler()
 
         self._simTimeStart = rospy.get_time() #Will be overwritten by resetWorld
         self._lastStepEnd = self._simTimeStart #Will be overwritten by resetWorld

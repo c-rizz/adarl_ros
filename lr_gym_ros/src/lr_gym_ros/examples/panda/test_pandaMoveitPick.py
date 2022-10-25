@@ -5,9 +5,9 @@ import numpy as np
 import argparse
 from datetime import datetime
 
-from lr_gym_ros.envs.panda.PandaMoveitPickEnv import PandaMoveitPickEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.envs.panda.PandaMoveitPickEnv import PandaMoveitPickEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+import lr_gym.utils.dbg.ggLog as ggLog
 from lr_gym_ros.envControllers.MoveitRosController import MoveitRosController
 
 

@@ -12,10 +12,10 @@ import gazebo_msgs
 
 
 from lr_gym_ros.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
-from lr_gym_ros.envControllers.JointEffortEnvController import JointEffortEnvController
-from lr_gym_ros.utils.utils import JointState
-from lr_gym_ros.utils.utils import LinkState
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.utils.utils import JointState
+from lr_gym.utils.utils import LinkState
+import lr_gym.utils.dbg.ggLog as ggLog
 
 class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
     """This class allows to control the execution of a Gazebo simulation.

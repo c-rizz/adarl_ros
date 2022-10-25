@@ -3,9 +3,9 @@
 import time
 import tqdm
 from stable_baselines3 import A2C
-from lr_gym_ros.envs.CartpoleEnv import CartpoleEnv
+from lr_gym.envs.CartpoleEnv import CartpoleEnv
 import stable_baselines3
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 import argparse
 
 def main() -> None:

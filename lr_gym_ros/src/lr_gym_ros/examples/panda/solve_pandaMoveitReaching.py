@@ -9,9 +9,9 @@ import argparse
 from datetime import datetime
 from stable_baselines.common import env_checker
 
-from lr_gym_ros.envs.panda.PandaMoveitReachingEnv import PandaMoveitReachingEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.envs.panda.PandaMoveitReachingEnv import PandaMoveitReachingEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+import lr_gym.utils.dbg.ggLog as ggLog
 
 
 def main(trainIterations : int, real : bool, robot_ip : str) -> None:

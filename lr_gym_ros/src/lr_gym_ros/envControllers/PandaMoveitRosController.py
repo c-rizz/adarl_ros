@@ -8,12 +8,12 @@ import rospy
 import franka_msgs.msg
 import time
 from threading import Lock
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+import lr_gym.utils.dbg.ggLog as ggLog
 from typing import Dict, List, Tuple
 import lr_gym_ros_utils
 import lr_gym_ros
 from lr_gym_ros.envControllers.MoveitRosController import MoveFailError
-import lr_gym_ros.utils.beep
+import lr_gym.utils.beep
 from actionlib_msgs.msg import GoalStatus
 
 class PandaMoveitRosController(MoveitRosController):

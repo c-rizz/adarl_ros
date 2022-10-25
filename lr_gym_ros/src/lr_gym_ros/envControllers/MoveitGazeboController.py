@@ -8,12 +8,12 @@ from typing import List, Any, Tuple, Dict, Optional
 from lr_gym_ros.envControllers.RosEnvController import RequestFailError
 from lr_gym_ros.envControllers.MoveitRosController import MoveitRosController
 from lr_gym_ros.envControllers.GazeboController import GazeboController
-from lr_gym_ros.envControllers.SimulatedEnvController import SimulatedEnvController
+from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController
 
 import rospy
 import sensor_msgs
 
-from lr_gym_ros.utils.utils import JointState, LinkState, Pose
+from lr_gym.utils.utils import JointState, LinkState, Pose
 
 
 class MoveitGazeboController(MoveitRosController, SimulatedEnvController):

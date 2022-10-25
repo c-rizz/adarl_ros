@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import rospy
 from std_msgs.msg import String
-import lr_gym_ros.utils.beep
+import lr_gym.utils.beep
 
 def callback(data):
     if data.data == "boop":

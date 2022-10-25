@@ -8,11 +8,11 @@ from nptyping import NDArray
 
 from stable_baselines3 import SAC
 from stable_baselines3.sac import MlpPolicy
-from lr_gym_ros.envs.CartpoleContinuousEnv import CartpoleContinuousEnv
-from lr_gym_ros.envs.CartpoleNoisyContinuousEnv import CartpoleNoisyContinuousEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-import lr_gym_ros.utils.dbg.ggLog as ggLog
-import lr_gym_ros.utils.utils
+from lr_gym.envs.CartpoleContinuousEnv import CartpoleContinuousEnv
+from lr_gym.envs.CartpoleNoisyContinuousEnv import CartpoleNoisyContinuousEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+import lr_gym.utils.dbg.ggLog as ggLog
+import lr_gym.utils.utils
 
 def main(obsNoise : NDArray[(4,),np.float32]) -> None: 
     """Solves the gazebo cartpole environment using the DQN implementation by stable-baselines.
@@ -27,7 +27,7 @@ def main(obsNoise : NDArray[(4,),np.float32]) -> None:
     """
 
     
-    folderName = lr_gym_ros.utils.utils.lr_gym_ros_startup(__file__, inspect.currentframe(), seed = 0)
+    folderName = lr_gym.utils.utils.lr_gym_startup(__file__, inspect.currentframe(), seed = 0)
 
     #logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s.%(msecs)03d][%(levelname)s] %(message)s', datefmt='%Y-%m-%d,%H:%M:%S')
 

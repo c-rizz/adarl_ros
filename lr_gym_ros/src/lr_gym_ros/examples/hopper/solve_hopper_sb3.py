@@ -12,9 +12,9 @@ import datetime
 from pybullet_envs.gym_locomotion_envs import HopperBulletEnv
 
 
-from lr_gym_ros.envs.HopperEnv import HopperEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-from lr_gym_ros.envControllers.PyBulletController import PyBulletController
+from lr_gym.envs.HopperEnv import HopperEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+from lr_gym.envControllers.PyBulletController import PyBulletController
 from lr_gym_ros.envControllers.GazeboController import GazeboController
 
 def main(usePyBullet : bool = False,

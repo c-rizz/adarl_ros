@@ -15,11 +15,11 @@ import stable_baselines
 import datetime
 
 import lr_gym_ros
-from lr_gym_ros.envs.PointPositionReachingEnv import PointPositionReachingEnv
-from lr_gym_ros.envs.ToGoalEnvWrapper import ToGoalEnvWrapper
+from lr_gym.envs.PointPositionReachingEnv import PointPositionReachingEnv
+from lr_gym.envs.ToGoalEnvWrapper import ToGoalEnvWrapper
 from stable_baselines.common.callbacks import CheckpointCallback
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+import lr_gym.utils.dbg.ggLog as ggLog
 import numpy as np
 
 def run(env : gym.Env, model : stable_baselines.common.base_class.BaseRLModel, numEpisodes : int = -1):
@@ -75,7 +75,7 @@ def buildModel(random_seed : int, env : gym.Env, folderName : str):
     return model
 
 
-def train(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainIterations : int, model, filename : str, folderName : str) -> None:
+def train(env : lr_gym.envs.BaseEnv.BaseEnv, trainIterations : int, model, filename : str, folderName : str) -> None:
     """Run the provided environment with a random agent."""
 
     env.reset()
@@ -91,7 +91,7 @@ def train(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainIterations : int, model, f
 
     return model
 
-def load(model, filename : str, env : lr_gym_ros.envs.BaseEnv.BaseEnv) -> None:
+def load(model, filename : str, env : lr_gym.envs.BaseEnv.BaseEnv) -> None:
     """Run the provided environment with a random agent."""
 
     print("Loading "+filename+"...")

@@ -4,7 +4,7 @@ import numpy as np
 import rospy
 from cv_bridge import CvBridge
 import sensor_msgs.msg
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+import lr_gym.utils.dbg.ggLog as ggLog
 import traceback
 
 class DbgImg:

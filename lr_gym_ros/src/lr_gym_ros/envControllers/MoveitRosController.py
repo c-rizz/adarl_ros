@@ -8,7 +8,7 @@ from typing import Dict
 from typing import Optional
 
 from lr_gym_ros.envControllers.RosEnvController import RosEnvController
-from lr_gym_ros.envControllers.CartesianPositionEnvController import CartesianPositionEnvController
+from lr_gym.envControllers.CartesianPositionEnvController import CartesianPositionEnvController
 from lr_gym_ros.rosControlUtils import ControllerManagementHelper
 from lr_gym_ros.rosControlUtils import TrajectoryControllerHelper
 
@@ -23,8 +23,8 @@ import lr_gym_ros.utils
 import control_msgs.msg
 import time
 
-from lr_gym_ros.utils.utils import buildPoseStamped
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.utils.utils import buildPoseStamped
+import lr_gym.utils.dbg.ggLog as ggLog
 import lr_gym_ros.utils.dbg.dbg_pose as dbg_pose
 
 import geometry_msgs
@@ -186,7 +186,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
                              ee_link : str = None, reference_frame : str = None) -> None:
 
         goal = lr_gym_ros_utils.msg.MoveToEePoseGoal()
-        goal.pose = lr_gym_ros.utils.utils.buildPoseStamped(eePose_xyz_xyzw[0:3],eePose_xyz_xyzw[3:7],
+        goal.pose = lr_gym.utils.utils.buildPoseStamped(eePose_xyz_xyzw[0:3],eePose_xyz_xyzw[3:7],
                                                         self._referenceFrame if reference_frame is None else reference_frame)
         goal.end_effector_link = self._endEffectorLink[1] if ee_link is None else ee_link
         goal.velocity_scaling = self._default_velocity_scaling if velocity_scaling is None else velocity_scaling

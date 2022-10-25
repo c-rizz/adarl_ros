@@ -15,8 +15,8 @@ import datetime
 import numpy as np
 
 import lr_gym_ros
-from lr_gym_ros.envs.panda.PandaEffortKeepPoseEnv import PandaEffortKeepPoseEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
+from lr_gym.envs.panda.PandaEffortKeepPoseEnv import PandaEffortKeepPoseEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 from stable_baselines.common.callbacks import CheckpointCallback
 
 def run(env : gym.Env, model : stable_baselines.common.base_class.BaseRLModel, numEpisodes : int = -1):
@@ -57,7 +57,7 @@ def buildModel(random_seed : int, env : gym.Env, folderName : str):
 
     return model
 
-def train(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainIterations : int, model, filename : str, folderName : str) -> None:
+def train(env : lr_gym.envs.BaseEnv.BaseEnv, trainIterations : int, model, filename : str, folderName : str) -> None:
     env.reset()
     checkpoint_callback = CheckpointCallback(save_freq=100000, save_path=folderName+'/checkpoints/', name_prefix=filename)
     print("Learning...")
@@ -68,7 +68,7 @@ def train(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainIterations : int, model, f
     model.save(filename)
     print("Saved as "+filename)
 
-def load(model, filename : str, env : lr_gym_ros.envs.BaseEnv.BaseEnv) -> None:
+def load(model, filename : str, env : lr_gym.envs.BaseEnv.BaseEnv) -> None:
 
     n_actions = env.action_space.shape[-1]
     print("Loading "+filename+"...")

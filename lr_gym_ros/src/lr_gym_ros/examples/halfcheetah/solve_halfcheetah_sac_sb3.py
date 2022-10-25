@@ -8,8 +8,8 @@ from nptyping import NDArray
 
 from stable_baselines3 import SAC
 from stable_baselines3.sac import MlpPolicy
-import lr_gym_ros.utils.dbg.ggLog as ggLog
-import lr_gym_ros.utils.utils
+import lr_gym.utils.dbg.ggLog as ggLog
+import lr_gym.utils.utils
 
 
 
@@ -37,8 +37,8 @@ def main(obsNoise : NDArray[(4,),np.float32],
     """
 
     
-    folderName = lr_gym_ros.utils.utils.lr_gym_ros_startup(__file__, inspect.currentframe())
-    device = lr_gym_ros.utils.utils.torch_selectBestGpu()
+    folderName = lr_gym.utils.utils.lr_gym_startup(__file__, inspect.currentframe())
+    device = lr_gym.utils.utils.torch_selectBestGpu()
     RANDOM_SEED=0
     # dmenv = suite.load("cheetah",
     #                     "run",

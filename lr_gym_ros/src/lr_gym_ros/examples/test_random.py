@@ -5,7 +5,7 @@ import argparse
 import gym
 import importlib
 import lr_gym_ros.utils.dbg.dbg_img as dbg_img
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 
 def runRandom(env : gym.Env, numEpisodes : int, pubRender : bool, fps : float) -> None:
     """Run the provided environment with a random agent."""

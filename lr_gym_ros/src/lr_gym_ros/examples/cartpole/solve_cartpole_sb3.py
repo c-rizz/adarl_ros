@@ -4,9 +4,9 @@ import time
 import tqdm
 from stable_baselines3.dqn import MlpPolicy
 from stable_baselines3 import DQN
-from lr_gym_ros.envs.CartpoleEnv import CartpoleEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.envs.CartpoleEnv import CartpoleEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+import lr_gym.utils.dbg.ggLog as ggLog
 
 def main() -> None:
     """Solves the gazebo cartpole environment using the DQN implementation by stable-baselines.

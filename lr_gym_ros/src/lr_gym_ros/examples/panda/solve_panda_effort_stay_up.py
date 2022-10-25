@@ -13,8 +13,8 @@ import datetime
 import numpy as np
 
 import lr_gym_ros
-from lr_gym_ros.envs.panda.PandaEffortStayUpEnv import PandaEffortStayUpEnv
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
+from lr_gym.envs.panda.PandaEffortStayUpEnv import PandaEffortStayUpEnv
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 
 def run(env : gym.Env, model : stable_baselines.common.base_class.BaseRLModel, numEpisodes : int = -1):
     #frames = []
@@ -38,7 +38,7 @@ def run(env : gym.Env, model : stable_baselines.common.base_class.BaseRLModel, n
         print("Ran for "+str(totDuration)+"s \t Reward: "+str(episodeReward))
 
 
-def trainOrLoad(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainIterations : int, episodeLength : int, fileToLoad : str = None) -> None:
+def trainOrLoad(env : lr_gym.envs.BaseEnv.BaseEnv, trainIterations : int, episodeLength : int, fileToLoad : str = None) -> None:
     """Run the provided environment with a random agent."""
 
     #setup seeds for reproducibility

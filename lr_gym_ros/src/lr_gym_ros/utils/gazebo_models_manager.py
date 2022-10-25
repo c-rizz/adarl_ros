@@ -1,6 +1,6 @@
 from importlib.util import module_for_loader
 from pkg_resources import require
-from lr_gym_ros.utils.utils import Pose
+from lr_gym.utils.utils import Pose
 
 from typing import List, Dict
 import os
@@ -8,7 +8,7 @@ import subprocess
 from gazebo_msgs.srv import SpawnModelRequest,SpawnModel
 import rospy
 from gazebo_msgs.srv import DeleteModel, DeleteModelRequest
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+import lr_gym.utils.dbg.ggLog as ggLog
 import time
 
 spawned_models = []

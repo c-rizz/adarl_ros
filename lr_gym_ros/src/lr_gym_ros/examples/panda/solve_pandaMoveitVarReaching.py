@@ -12,11 +12,11 @@ import stable_baselines
 import datetime
 
 import lr_gym_ros
-from lr_gym_ros.envs.panda.PandaMoveitVarReachingEnv import PandaMoveitVarReachingEnv
-from lr_gym_ros.envs.ToGoalEnvWrapper import ToGoalEnvWrapper
+from lr_gym.envs.panda.PandaMoveitVarReachingEnv import PandaMoveitVarReachingEnv
+from lr_gym.envs.ToGoalEnvWrapper import ToGoalEnvWrapper
 from stable_baselines.common.callbacks import CheckpointCallback
-from lr_gym_ros.envs.GymEnvWrapper import GymEnvWrapper
-import lr_gym_ros.utils.dbg.ggLog as ggLog
+from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
+import lr_gym.utils.dbg.ggLog as ggLog
 import numpy as np
 
 def run(env : gym.Env, model : stable_baselines.common.base_class.BaseRLModel, numEpisodes : int = -1):
@@ -57,7 +57,7 @@ def buildModel(random_seed : int, env : gym.Env, folderName : str):
     return model
 
 
-def train(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainEnvSteps : int, model, filename : str, folderName : str) -> None:
+def train(env : lr_gym.envs.BaseEnv.BaseEnv, trainEnvSteps : int, model, filename : str, folderName : str) -> None:
     """Run the provided environment with a random agent."""
 
     env.reset()
@@ -73,7 +73,7 @@ def train(env : lr_gym_ros.envs.BaseEnv.BaseEnv, trainEnvSteps : int, model, fil
 
     return model
 
-def load(model, filename : str, env : lr_gym_ros.envs.BaseEnv.BaseEnv) -> None:
+def load(model, filename : str, env : lr_gym.envs.BaseEnv.BaseEnv) -> None:
     """Run the provided environment with a random agent."""
 
     print("Loading "+filename+"...")
@@ -118,7 +118,7 @@ def main(fileToLoad : str = None, real : bool = False, robot_ip : str = None) ->
     def sampleGoal(rng):
         #sample a position in a 2d rectangle in front of the robot
         position = rng.uniform(low=(0.5, -0.25, 0.2), high=(0.5, 0.25, 0.6))
-        p = lr_gym_ros.utils.utils.Pose(x=position[0],y=position[1],z=position[2],qx=0.707, qy=0, qz=0.707, qw=0)
+        p = lr_gym.utils.utils.Pose(x=position[0],y=position[1],z=position[2],qx=0.707, qy=0, qz=0.707, qw=0)
         return p
 
 
