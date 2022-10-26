@@ -63,7 +63,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
 
 
     
-    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = "urdf"):
+    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = None):
         self._gazeboController.spawn_model(model_definition = model_definition,
                                             pose=pose,
                                             model_name=model_name,

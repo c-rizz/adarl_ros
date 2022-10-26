@@ -7,6 +7,7 @@ from stable_baselines3 import DQN
 from lr_gym.envs.CartpoleEnv import CartpoleEnv
 from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
 import lr_gym.utils.dbg.ggLog as ggLog
+from lr_gym_ros.envControllers.GazeboController import GazeboController
 
 def main() -> None:
     """Solves the gazebo cartpole environment using the DQN implementation by stable-baselines.
@@ -24,7 +25,12 @@ def main() -> None:
 
     #rospy.init_node('solve_dqn_stable_baselines', anonymous=True, log_level=rospy.WARN)
     #env = gym.make('CartPoleStayUp-v0')
-    env = GymEnvWrapper(CartpoleEnv(render=False, startSimulation = True), episodeInfoLogFile = logFolder+"/GymEnvWrapper_log.csv")
+    stepLength_sec = 0.05
+    env = GymEnvWrapper(CartpoleEnv(render=False,
+                                    startSimulation = True,
+                                    stepLength_sec = stepLength_sec,
+                                    environmentController = GazeboController(stepLength_sec = stepLength_sec)),
+                        episodeInfoLogFile = logFolder+"/GymEnvWrapper_log.csv")
     #setup seeds for reproducibility
     RANDOM_SEED=20200401
     env.seed(RANDOM_SEED)

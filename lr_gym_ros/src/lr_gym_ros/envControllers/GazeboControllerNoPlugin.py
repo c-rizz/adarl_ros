@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import traceback
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Union
 import time
 import gazebo_msgs
 import gazebo_msgs.srv
@@ -466,8 +466,31 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         self.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
 
     
-    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = "urdf"):
-        spawn_model(rospkg.RosPack().get_path(model_definition[0])+model_definition[1],
+    def spawn_model(self, model_definition : Union[str,Tuple[str,str]], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = None):
+        if isinstance(model_definition, str):
+            path = model_definition
+        elif isinstance(model_definition, tuple):        
+            path = rospkg.RosPack().get_path(model_definition[0])+model_definition[1]
+        else:
+            raise AttributeError("model_definition should be either a tuple (pkg, path) or a string (path)")
+
+        if format is None:
+            filename_split = path.split(".")
+            ext = filename_split[-1]
+            if ext == "urdf":
+                format = "urdf"
+            elif ext == "sdf":
+                format = "sdf"
+            elif ext == "xacro":
+                ext = filename_split[-2]
+                if ext == "urdf":
+                    format = "urdf"
+                elif ext == "sdf":
+                    format = "sdf"
+            if format is None:
+                raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_definition = {model_definition}")
+        
+        spawn_model(path,
                     pose=pose,
                     model_name=model_name,
                     args=model_kwargs,
