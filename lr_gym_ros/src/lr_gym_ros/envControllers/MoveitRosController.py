@@ -2,34 +2,21 @@
 
 """This file implements the MoveitRosController class."""
 
-from typing import List
-from typing import Tuple
-from typing import Dict
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
-from lr_gym_ros.envControllers.RosEnvController import RosEnvController
-from lr_gym.envControllers.CartesianPositionEnvController import CartesianPositionEnvController
-from lr_gym_ros.rosControlUtils import ControllerManagementHelper
-from lr_gym_ros.rosControlUtils import TrajectoryControllerHelper
-
-import rospy
-import std_msgs
+import actionlib
+import control_msgs.msg
+import lr_gym
+import lr_gym.utils.dbg.ggLog as ggLog
+import lr_gym.utils
+import lr_gym.utils.utils
+import lr_gym_ros.utils.dbg.dbg_pose as dbg_pose
 import lr_gym_ros_utils.msg
 import lr_gym_ros_utils.srv
-import actionlib
 import numpy as np
-from nptyping import NDArray
-import lr_gym_ros.utils
-import control_msgs.msg
-import time
-
-from lr_gym.utils.utils import buildPoseStamped
-import lr_gym.utils.dbg.ggLog as ggLog
-import lr_gym_ros.utils.dbg.dbg_pose as dbg_pose
-
-import geometry_msgs
-import lr_gym_ros_utils.srv
-
+import rospy
+from lr_gym.envControllers.CartesianPositionEnvController import CartesianPositionEnvController
+from lr_gym_ros.envControllers.RosEnvController import RosEnvController
 
 
 class MoveFailError(Exception):
@@ -49,12 +36,12 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
                  jointsOrder : List[Tuple[str,str]],
                  endEffectorLink : Tuple[str,str],
                  referenceFrame : str,
-                 initialJointPose : Optional[Dict[Tuple[str,str],float]],
-                 gripperActionTopic : str = None,
+                 initialJointPose : Dict[Tuple[str,str],float],
+                 gripperActionTopic : Optional[str] = None,
                  gripperInitialWidth : float = -1,
                  default_velocity_scaling = 0.1,
                  default_acceleration_scaling = 0.1,
-                 default_collision_objs : List[Tuple[List[float],List[float]]] = [],
+                 default_collision_objs : List[Tuple[Tuple[float,float,float,float,float,float,float],Tuple[float,float,float]]] = [],
                  maxObsDelay = float("+inf"),
                  blocking_observation = False):
         """Initialize the environment controller.
@@ -132,8 +119,8 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
 
     def _controlJointPosition(self, jointPositions : Dict[Tuple[str,str],float],
                                     synchronous : bool,
-                                    velocity_scaling : float = None,
-                                    acceleration_scaling : float = None) -> None:
+                                    velocity_scaling : Optional[float] = None,
+                                    acceleration_scaling : Optional[float] = None) -> None:
         goal = lr_gym_ros_utils.msg.MoveToJointPoseGoal()
         goal.pose = [jointPositions[v] for v in self._jointsOrder]
         goal.velocity_scaling = self._default_velocity_scaling if velocity_scaling is None else velocity_scaling
@@ -141,7 +128,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         self._moveJointClient.send_goal(goal)
 
         def waitCallback():
-            r = self._moveJointClient.wait_for_result(timeout = rospy.Duration(10.0))
+            r = self._moveJointClient.wait_for_result(timeout = rospy.Duration.from_sec(10.0))
             if r:
                 if self._moveJointClient.get_result().succeded:
                     return
@@ -150,7 +137,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
             else:
                 self._moveJointClient.cancel_goal()
                 self._moveJointClient.cancel_all_goals()
-                r = self._moveJointClient.wait_for_result(timeout = rospy.Duration(10.0))
+                r = self._moveJointClient.wait_for_result(timeout = rospy.Duration.from_sec(10.0))
                 if r:
                     raise MoveFailError(f"Failed to move to joint pose: action timed out. Action canceled. Goal={goal}.  Result = {self._moveJointClient.get_result()}")
                 else:
@@ -161,10 +148,14 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         else:
             self._waitOnStepCallbacks.append(waitCallback)
 
-    def setJointsPositionCommand(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : float = None, acceleration_scaling : float = None) -> None:
+    def setJointsPositionCommand(self,  jointPositions : Dict[Tuple[str,str],float],
+                                        velocity_scaling : Optional[float] = None,
+                                        acceleration_scaling : Optional[float] = None) -> None:
         self._controlJointPosition(jointPositions = jointPositions, synchronous=False, velocity_scaling=velocity_scaling, acceleration_scaling=acceleration_scaling)
 
-    def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : float = None, acceleration_scaling : float = None) -> None:
+    def moveToJointPoseSync(self,   jointPositions : Dict[Tuple[str,str],float],
+                                    velocity_scaling : Optional[float] = None,
+                                    acceleration_scaling : Optional[float] = None) -> None:
         self._controlJointPosition(jointPositions = jointPositions, synchronous=True, velocity_scaling=velocity_scaling, acceleration_scaling=acceleration_scaling)
 
 
@@ -180,10 +171,10 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
     #         EE control
     # --------------------------------------------------------------------------------------------------------------------------------------
 
-    def _controlEEPose(self, eePose_xyz_xyzw : NDArray[(7,), np.float32],
+    def _controlEEPose(self, eePose_xyz_xyzw : List[float],
                              synchronous : bool, 
-                             do_cartesian = False, velocity_scaling : float = None, acceleration_scaling : float = None,
-                             ee_link : str = None, reference_frame : str = None) -> None:
+                             do_cartesian : bool = False, velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None,
+                             ee_link : Optional[str] = None, reference_frame : Optional[str] = None) -> None:
 
         goal = lr_gym_ros_utils.msg.MoveToEePoseGoal()
         goal.pose = lr_gym.utils.utils.buildPoseStamped(eePose_xyz_xyzw[0:3],eePose_xyz_xyzw[3:7],
@@ -199,7 +190,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
 
         def waitCallback():
             # ggLog.info("waiting cartesian....")
-            r = self._moveEeClient.wait_for_result(timeout = rospy.Duration(10.0))
+            r = self._moveEeClient.wait_for_result(timeout = rospy.Duration.from_sec(10.0))
             if r:
                 if self._moveEeClient.get_result().succeded:
                     # ggLog.info("waited cartesian....")
@@ -209,7 +200,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
             else:
                 self._moveEeClient.cancel_goal()
                 self._moveEeClient.cancel_all_goals()
-                r = self._moveEeClient.wait_for_result(timeout = rospy.Duration(10.0))
+                r = self._moveEeClient.wait_for_result(timeout = rospy.Duration.from_sec(10.0))
                 if r:
                     raise MoveFailError(f"Failed to move to cartesian pose: action timed out. Action canceled. Goal={goal}. Result = {self._moveEeClient.get_result()}")
                 else:
@@ -222,7 +213,8 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
     
 
 
-    def setCartesianPoseCommand(self, linkPoses : Dict[Tuple[str,str],NDArray[(7,), np.float32]], do_cartesian = False, velocity_scaling : float = None, acceleration_scaling : float = None) -> None:
+    def setCartesianPoseCommand(self,   linkPoses : Dict[Tuple[str,str], List[float]], do_cartesian : bool = False,
+                                        velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None) -> None:
         """Request a set of links to be placed at a specific cartesian pose.
 
         This is mainly meant as a way to perform cartesian end effector control. Meaning
@@ -251,8 +243,9 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
                             do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling)
 
     
-    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling : float = None, acceleration_scaling : float = None,
-                                ee_link : str = None, reference_frame : str = None):
+    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling :Optional[float] = None,
+                                acceleration_scaling : Optional[float] = None, ee_link : Optional[str] = None,
+                                reference_frame : Optional[str] = None):
         self._controlEEPose(eePose_xyz_xyzw = pose,
                             synchronous = True,
                             do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling,
@@ -283,7 +276,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         self._gripperActionClient.send_goal(goal)
 
         def waitCallback():
-            r = self._gripperActionClient.wait_for_result(timeout = rospy.Duration(3.0))
+            r = self._gripperActionClient.wait_for_result(timeout = rospy.Duration.from_sec(3.0))
             if r:
                 if self._gripperActionClient.get_result().reached_goal:
                     return
@@ -292,7 +285,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
             else:
                 self._gripperActionClient.cancel_goal()
                 self._gripperActionClient.cancel_all_goals()
-                r = self._gripperActionClient.wait_for_result(timeout = rospy.Duration(5.0))
+                r = self._gripperActionClient.wait_for_result(timeout = rospy.Duration.from_sec(5.0))
                 if r:
                     if not self._gripperActionClient.get_result().reached_goal:
                         raise MoveFailError(f"Failed to perform gripper move: action timed out. Action canceled.\n Result = {self._gripperActionClient.get_result()}\n"+
@@ -345,7 +338,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
                 moved = True
                 break
             except Exception as e:
-                ggLog.error("Reset move failed. exception = "+str(e))
+                ggLog.error("Reset move failed. exception = "+lr_gym.utils.utils.exc_to_str(e))
                 #self._actionsFailsInLastStepCounter+=1
                 rospy.sleep(1)
                 ggLog.error("retrying reset move.")
@@ -392,7 +385,11 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         return rospy.get_time() - t0
 
 
-    def addCollisionBox(self, pose_xyz_xyzw : Tuple[float,float,float,float,float,float,float], size_xyz : Tuple[float,float,float], attach_link : str = None, reference_frame : str = None, attach_ignored_links : List[str] = None):
+    def addCollisionBox(self,   pose_xyz_xyzw : Tuple[float,float,float,float,float,float,float],
+                                size_xyz : Tuple[float,float,float],
+                                attach_link : Optional[str] = None,
+                                reference_frame : Optional[str] = None,
+                                attach_ignored_links : Optional[List[str]] = None):
         req = lr_gym_ros_utils.srv.AddCollisionBoxRequest()
         req.pose.header.frame_id = self._referenceFrame if reference_frame is None else reference_frame
         req.pose.pose.position.x = pose_xyz_xyzw[0]

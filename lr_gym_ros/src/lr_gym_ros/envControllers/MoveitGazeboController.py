@@ -12,6 +12,7 @@ from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController
 
 import rospy
 import sensor_msgs
+import sensor_msgs.msg
 
 from lr_gym.utils.utils import JointState, LinkState, Pose
 
@@ -25,7 +26,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
                  endEffectorLink : Tuple[str,str],
                  referenceFrame : str,
                  initialJointPose : Optional[Dict[Tuple[str,str],float]],
-                 gripperActionTopic : str = None,
+                 gripperActionTopic : Optional[str] = None,
                  gripperInitialWidth : float = -1,
                  default_velocity_scaling = 0.1,
                  default_acceleration_scaling = 0.1,
@@ -166,8 +167,9 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         if wasPaused:
             self._gazeboController.pauseSimulation()
 
-    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling : float = None, acceleration_scaling : float = None,
-                                ee_link : str = None, reference_frame : str = None):
+    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling : Optional[float] = None,
+                                acceleration_scaling : Optional[float] = None, ee_link : Optional[str] = None,
+                                reference_frame : Optional[str] = None):
         wasPaused = self._gazeboController.isPaused()
         if wasPaused:
             self._gazeboController.unpauseSimulation()
@@ -176,7 +178,8 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         if wasPaused:
             self._gazeboController.pauseSimulation()
     
-    def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : float = None, acceleration_scaling : float = None) -> None:
+    def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : Optional[float] = None,
+                                    acceleration_scaling : Optional[float] = None) -> None:
         wasPaused = self._gazeboController.isPaused()
         if wasPaused:
             self._gazeboController.unpauseSimulation()

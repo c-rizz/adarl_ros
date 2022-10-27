@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
-from typing import List
-from typing import Tuple
-from typing import Dict
-
-import sensor_msgs
-from threading import Lock
-
-from lr_gym.utils.utils import JointState, LinkState, RequestFailError
-from lr_gym.envControllers.EnvironmentController import EnvironmentController
-from lr_gym_ros_utils.msg import LinkStates
-import lr_gym_ros_utils
-import rospkg
-
-import rospy
-import lr_gym_ros
 import os
 import time
+from threading import Lock
+from typing import Dict, List, Tuple, Union
+
+import lr_gym.utils.beep
 import lr_gym.utils.dbg.ggLog as ggLog
 import lr_gym.utils.utils
-import lr_gym.utils.beep
 import lr_gym_ros_utils.ros_launch_utils
+import rospkg
+import rospy
+import sensor_msgs.msg
+from lr_gym.envControllers.EnvironmentController import EnvironmentController
+from lr_gym.utils.utils import JointState, LinkState, RequestFailError
+from lr_gym_ros_utils.msg import LinkStates
 
 
 class RosEnvController(EnvironmentController):
@@ -29,7 +23,7 @@ class RosEnvController(EnvironmentController):
 
     """
 
-    def __init__(   self, stepLength_sec : float = 0.001, forced_ros_master_uri : str = None, maxObsDelay = float("+inf"), blocking_observation = False):
+    def __init__(   self, stepLength_sec : float = 0.001, forced_ros_master_uri : Union[str, None] = None, maxObsDelay = float("+inf"), blocking_observation = False):
         """Initialize the Simulator controller.
 
         Raises
@@ -62,7 +56,7 @@ class RosEnvController(EnvironmentController):
 
         self._maxObsAge = maxObsDelay
         self._blocking_observation = blocking_observation
-        self._mmRosLauncher = None
+        self._mmRosLauncher : lr_gym_ros_utils.ros_launch_utils.MultiMasterRosLauncher = None
 
 
     def step(self) -> float:
@@ -217,7 +211,7 @@ class RosEnvController(EnvironmentController):
                 break
             if rospy.get_time() - lastErrTime > 10:
                 ggLog.warn(f"Waiting for images since {rospy.get_time()-call_time}s. Still missing: {camerasMissing}")
-                lr_gym_ros.utils.beep.beep()
+                lr_gym.utils.beep.beep()
                 lastErrTime = rospy.get_time()
             self.freerun(0.01)
 
@@ -235,7 +229,10 @@ class RosEnvController(EnvironmentController):
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
         if not self._listenersStarted:
             raise RuntimeError("called getJointsState without having called startController. The proper way to initialize the controller is to first build the controller, then call setJointsToObserve, and then call startController")
+        
 
+        gottenJoints = {}
+        missingJoints = requestedJoints
         for j in requestedJoints:
             if j not in self._jointsToObserve:
                 raise RuntimeError("Requested joint that was not requested in setJointsToObserve")
@@ -245,7 +242,6 @@ class RosEnvController(EnvironmentController):
             # ggLog.info("RosEnvController.getJointsState() called")
 
             call_time = rospy.get_time()
-            gottenJoints = {}
 
             lastErrTime = call_time
             while True:
@@ -276,7 +272,7 @@ class RosEnvController(EnvironmentController):
 
                 if rospy.get_time() - lastErrTime > 10:
                     ggLog.warn(f"Waiting for joints since {rospy.get_time()-call_time}s. Still missing: {missingJoints}")
-                    lr_gym_ros.utils.beep.beep()                
+                    lr_gym.utils.beep.beep()                
                     lastErrTime = rospy.get_time()
 
 
@@ -346,7 +342,7 @@ class RosEnvController(EnvironmentController):
 
             if rospy.get_time() - lastErrTime > 10:
                 ggLog.warn(f"Waiting for links since {rospy.get_time()-call_time}s. Still missing: {missingLinks}")
-                lr_gym_ros.utils.beep.beep()
+                lr_gym.utils.beep.beep()
                 lastErrTime = rospy.get_time()
 
 

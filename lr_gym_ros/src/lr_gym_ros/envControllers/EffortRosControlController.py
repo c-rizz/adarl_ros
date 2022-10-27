@@ -1,8 +1,6 @@
 """This file implements the EffortRosControlController class."""
 #!/usr/bin/env python3
-from typing import List
-from typing import Tuple
-from typing import Dict
+from typing import List, Tuple, Dict, Union
 
 from lr_gym_ros.envControllers.RosEnvController import RosEnvController
 from lr_gym_ros.rosControlUtils import ControllerManagementHelper
@@ -11,7 +9,7 @@ from lr_gym_ros.rosControlUtils import TrajectoryControllerHelper
 from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
 
 import rospy
-import std_msgs
+import std_msgs.msg
 
 class EffortRosControlController(RosEnvController, JointEffortEnvController):
     """This class allows to control the execution of a ROS-based environment.
@@ -31,7 +29,7 @@ class EffortRosControlController(RosEnvController, JointEffortEnvController):
                  trajectoryControllersInfos : Dict[str,Tuple[str,str,Tuple[str]]],
                  initialJointPositions : List[Tuple[str,str,float]],
                  stepLength_sec : float = 0.001,
-                 forced_ros_master_uri : str = None):
+                 forced_ros_master_uri : Union[str,None] = None):
         """Initialize the environment controller.
 
         Parameters
@@ -66,7 +64,7 @@ class EffortRosControlController(RosEnvController, JointEffortEnvController):
         self._initialJointPositions = initialJointPositions
 
         self._initialTrajectoryControllersSetup = {}
-
+        
         usedInitialpositions = [] #just for a safety check
 
         print(str(type(self._trajectoryControllersInfos)))

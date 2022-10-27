@@ -4,8 +4,9 @@ import traceback
 from typing import List, Tuple, Dict, Any, Union
 import time
 import gazebo_msgs
+import gazebo_msgs.msg
 import gazebo_msgs.srv
-import rosgraph_msgs
+import rosgraph_msgs.msg
 
 import rospy
 from std_srvs.srv import Empty
@@ -19,6 +20,8 @@ import lr_gym.utils.dbg.ggLog as ggLog
 from lr_gym.utils.utils import Pose
 from lr_gym_ros.utils.gazebo_models_manager import delete_model, spawn_model
 import rospkg
+import lr_gym.utils
+import lr_gym.utils.utils
 
 class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, SimulatedEnvController):
     """This class allows to control the execution of a Gazebo simulation.
@@ -31,7 +34,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
     def __init__(   self,
                     usePersistentConnections : bool = False,
                     stepLength_sec : float = 0.001,
-                    rosMasterUri : str = None):
+                    rosMasterUri : Union[str, None] = None):
         """Initialize the Gazebo controller.
 
         Parameters
@@ -83,11 +86,11 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
                 rospy.loginfo("waiting for service "+serviceName+" ...")
                 rospy.wait_for_service(serviceName)
                 rospy.loginfo("got service "+serviceName)
-            except rospy.ROSException as e:
-                rospy.logfatal("Failed to wait for service "+serviceName+". Timeouts were "+str(timeout_secs)+"s. Exception = "+str(e))
-                raise
             except rospy.ROSInterruptException as e:
                 rospy.logfatal("Interrupeted while waiting for service "+serviceName+". Exception = "+str(e))
+                raise
+            except rospy.ROSException as e:
+                rospy.logfatal("Failed to wait for service "+serviceName+". Timeouts were "+str(timeout_secs)+"s. Exception = "+str(e))
                 raise
 
         self._applyJointEffortService   = rospy.ServiceProxy(serviceNames["applyJointEffort"], gazebo_msgs.srv.ApplyJointEffort, persistent=self._usePersistentConnections)
@@ -142,12 +145,12 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
                     serviceProxy.call()
                     done = True
                 except rospy.ServiceException as e:
-                    rospy.logerr("Service "+serviceProxy.resolved_name+", call failed: "+traceback.format_exc(e))
+                    rospy.logerr("Service "+serviceProxy.resolved_name+", call failed: "+lr_gym.utils.utils.exc_to_str(e))
                 except rospy.ROSInterruptException as e:
-                    rospy.logerr("Service "+serviceProxy.resolved_name+", call interrupted: "+traceback.format_exc(e))
+                    rospy.logerr("Service "+serviceProxy.resolved_name+", call interrupted: "+lr_gym.utils.utils.exc_to_str(e))
                     counter+=maxRetry #don't retry
                 except rospy.ROSSerializationException as e:
-                    rospy.logerr("Service "+serviceProxy.resolved_name+", call failed to serialize: "+traceback.format_exc(e))
+                    rospy.logerr("Service "+serviceProxy.resolved_name+", call failed to serialize: "+lr_gym.utils.utils.exc_to_str(e))
                 counter += 1
             else:
                 rospy.logerr("Failed to call service")
@@ -298,7 +301,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             request.duration.nsecs = nsecs
             res = self._applyJointEffortService.call(request)
             if not res.success:
-                rospy.logerror("Failed applying effort for joint "+jointName+": "+res.status_message)
+                ggLog.error("Failed applying effort for joint "+jointName+": "+res.status_message)
 
 
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
@@ -309,6 +312,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             jointName = joint[1]
             modelName = joint[0]
 
+            jointProp = gazebo_msgs.srv.GetJointPropertiesResponse()
             gotit = False
             tries = 0
             while not gotit and tries <10:

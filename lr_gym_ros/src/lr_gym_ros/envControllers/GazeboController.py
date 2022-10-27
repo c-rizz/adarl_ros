@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-from typing import List
-from typing import Tuple
-from typing import Dict
 import time
+from typing import Dict, List, Tuple, Union
 
-import rospy
-import gazebo_gym_env_plugin.srv
 import gazebo_gym_env_plugin.msg
-import sensor_msgs
-import gazebo_msgs
-
-
-from lr_gym_ros.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
-from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
-from lr_gym.utils.utils import JointState
-from lr_gym.utils.utils import LinkState
+import gazebo_gym_env_plugin.srv
 import lr_gym.utils.dbg.ggLog as ggLog
+import rospy
+import sensor_msgs
+import sensor_msgs.msg
+from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.utils.utils import JointState, LinkState
+from lr_gym_ros.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
+
 
 class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
     """This class allows to control the execution of a Gazebo simulation.
@@ -32,7 +28,7 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
     def __init__(   self,
                     usePersistentConnections : bool = False,
                     stepLength_sec : float = 0.001,
-                    rosMasterUri : str = None):
+                    rosMasterUri : Union[str,None] = None):
         """Initialize the Gazebo controller.
 
         Parameters
@@ -75,11 +71,11 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
                 rospy.loginfo("waiting for service "+serviceName+" ...")
                 rospy.wait_for_service(serviceName)
                 rospy.loginfo("got service "+serviceName)
-            except rospy.ROSException as e:
-                rospy.logfatal("Failed to wait for service "+serviceName+". Timeouts were "+str(timeout_secs)+"s. Exception = "+str(e))
-                raise
             except rospy.ROSInterruptException as e:
                 rospy.logfatal("Interrupeted while waiting for service "+serviceName+". Exception = "+str(e))
+                raise
+            except rospy.ROSException as e:
+                rospy.logfatal("Failed to wait for service "+serviceName+". Timeouts were "+str(timeout_secs)+"s. Exception = "+str(e))
                 raise
 
         self._stepGazeboService   = rospy.ServiceProxy(serviceNames["step"], gazebo_gym_env_plugin.srv.StepSimulation, persistent=self._usePersistentConnections)
@@ -186,7 +182,7 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
         #rospy.loginfo("Transfer time of rendering response = "+str(time.time()-res.response_time))
 
         if not res.render_result.success:
-            rospy.logerror("Error rendering cameras: "+res.render_result.error_message)
+            ggLog.error("Error rendering cameras: "+res.render_result.error_message)
 
         renders = {}
         for i in range(len(res.render_result.camera_names)):
