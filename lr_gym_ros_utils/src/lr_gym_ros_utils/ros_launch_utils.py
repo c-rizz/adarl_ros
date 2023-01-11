@@ -22,7 +22,7 @@ class SystemMutex:
         self._acquired = False
 
     def acquire(self) -> bool:
-        filePath = "/tmp/sysMtx-lr_gym_ros_utils-"+self.id
+        filePath = "/tmp/sysMtx-lr_gym_utils-"+self.id
         self.fp = open(filePath, "wb")
         try:
             fcntl.flock(self.fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

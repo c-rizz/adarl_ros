@@ -16,7 +16,8 @@
     <arg name="gazebo_seed" default="20200413"/>
     
 
-    <include file="$(find gazebo_ros)/launch/empty_world.launch" >
+    <include file="$(find lr_gym_ros)/launch/empty_world_gdb.launch" >
+    <!-- <include file="$(find gazebo_ros)/launch/empty_world.launch" > -->
         <arg name="paused" value="$(arg paused)"/>
         <arg name="world_name" value="$(arg world_name)"/>
         <arg name="verbose" value="True"/>

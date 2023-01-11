@@ -78,6 +78,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
                         "get_physics_properties" : "/gazebo/get_physics_properties",
                         "reset" : "/gazebo/reset_simulation",
                         "setLinkState" : "/gazebo/set_link_state",
+                        "setJointState" : "/gazebo/set_model_configuration",
                         "setLightProperties" : "/gazebo/set_light_properties"}
 
         timeout_secs = 30.0
@@ -102,6 +103,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         self._getPhysicsProperties      = rospy.ServiceProxy(serviceNames["get_physics_properties"], gazebo_msgs.srv.GetPhysicsProperties, persistent=self._usePersistentConnections)
         self._resetGazeboService        = rospy.ServiceProxy(serviceNames["reset"], Empty, persistent=self._usePersistentConnections)
         self._setLinkStateService       = rospy.ServiceProxy(serviceNames["setLinkState"], gazebo_msgs.srv.SetLinkState, persistent=self._usePersistentConnections)
+        self._setJointStateService      = rospy.ServiceProxy(serviceNames["setJointState"], gazebo_msgs.srv.SetModelConfiguration, persistent=self._usePersistentConnections)
         self._setLightPropertiesService = rospy.ServiceProxy(serviceNames["setLightProperties"], gazebo_msgs.srv.SetLightProperties, persistent=self._usePersistentConnections)
 
         #self._setGazeboPhysics = rospy.ServiceProxy(self._setGazeboPhysics, SetPhysicsProperties, persistent=self._usePersistentConnections)
@@ -407,7 +409,30 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         jointStates : Dict[Tuple[str,str],JointState]
             Keys are in the format (model_name, joint_name), the value is the joint state to enforce
         """
-        raise NotImplementedError()
+        model_configs = {}
+        for model_joint_names, joint_state in jointStates:
+            if model_joint_names[0] not in model_configs:
+                model_configs[model_joint_names[0]] = []
+            model_configs[model_joint_names[0]].append((model_joint_names[1], joint_state))
+
+        for model_name, joint_confs in model_configs.items():
+            req = gazebo_msgs.srv.SetModelConfiguration()
+            req.model_name = model_name
+            req.join_names = []
+            req.joint_positions = [] # Only uses first joint position
+            for jc in joint_confs:
+                req.join_names.append(jc[0])
+                if len(jc[1].position[0]) > 1:
+                    ggLog.warn(f"GazeboController only supports setting state for 1-D joints")
+                if jc[1].rate is not None:
+                    ggLog.warn(f"GazeboController does not support setting joint state rate directly")
+                if jc[1].effort is not None:
+                    ggLog.warn(f"GazeboController does not support setting joint state effort directly")
+                req.joint_positions.append(jc[1].position[0])
+                resp = self._setJointStateService(req)
+                
+                if not resp.success:
+                    ggLog.error(f"Failed setting joint state for model {req.model_name}, joints = {req.join_names}, positions = {req.joint_positions}, error = "+resp.status_message)
     
 
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):

@@ -13,16 +13,22 @@ import time
 
 spawned_models = []
 
-def waitService(servicename, serviceclass):
-    while True:
-        try:
-            rospy.wait_for_service(servicename, timeout=10)
-            break
-        except rospy.ROSException as e:
-            ggLog.info(f"Waiting for service {servicename}... (got error {e})")
-            time.sleep(1)
+serviceProxies = {}
 
-    return rospy.ServiceProxy(servicename, serviceclass)
+def waitService(servicename, serviceclass):
+    serviceProxy = serviceProxies.get(servicename, None)
+    if serviceProxy is None:
+        ggLog.info(f"gazbo_models_manager: Connecting to service {servicename}...")
+        while True:
+            try:
+                rospy.wait_for_service(servicename, timeout=10)
+                break
+            except rospy.ROSException as e:
+                ggLog.info(f"Waiting for service {servicename}... (got error {e})")
+                time.sleep(1)
+        serviceProxy = rospy.ServiceProxy(servicename, serviceclass)
+        serviceProxies[servicename] = serviceProxy
+    return serviceProxy
 
 
 def compile_xacro(xacro_file_path : str, args : Dict[str,str]):
@@ -43,6 +49,8 @@ def spawn_model(xacro_file_path : str,
                 robot_namespace = "", 
                 reference_frame = "world",
                 format = "urdf"):
+
+    ggLog.info(f"Spawning model '{model_name}'")
     urdf_string = compile_xacro(xacro_file_path,args)
     gazebo_namespace = "gazebo"
     if format == "urdf":
@@ -70,8 +78,10 @@ def spawn_model(xacro_file_path : str,
         raise RuntimeError(f"Failed to spawn model {xacro_file_path} with args {args}, response:\n  {response}")
 
     spawned_models.append(model_name)
+    ggLog.info(f"Spawned model '{model_name}'")
 
 def delete_model(model_name : str):
+    ggLog.info(f"Deleting model '{model_name}'")
     request = DeleteModelRequest()
     request.model_name = model_name
 
@@ -83,6 +93,7 @@ def delete_model(model_name : str):
         raise RuntimeError(f"Failed to delete model {model_name} response:\n  {response}")
 
     spawned_models.remove(model_name)
+    ggLog.info(f"Deleted model '{model_name}'")
 
 def delete_all_models():
     while len(spawned_models)>0:

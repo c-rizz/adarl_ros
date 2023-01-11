@@ -222,7 +222,7 @@ void moveToEePoseActionCallback(const lr_gym_ros_utils::MoveToEePoseGoalConstPtr
   catch(std::runtime_error& e)
   {
     std::string errorMsg = "moveToEePose failed with error "+std::string(e.what());
-    ROS_ERROR_STREAM(errorMsg);
+    ROS_WARN_STREAM(errorMsg);
     lr_gym_ros_utils::MoveToEePoseResult result;
     result.succeded = false;
     result.error_message = errorMsg;
@@ -247,7 +247,7 @@ void moveToJointPoseActionCallback(const lr_gym_ros_utils::MoveToJointPoseGoalCo
   catch(std::runtime_error& e)
   {
     std::string errorMsg = "moveToJointPose failed with error "+std::string(e.what());
-    ROS_ERROR_STREAM(errorMsg);
+    ROS_WARN_STREAM(errorMsg);
     lr_gym_ros_utils::MoveToJointPoseResult result;
     result.succeded = false;
     result.error_message = errorMsg;
