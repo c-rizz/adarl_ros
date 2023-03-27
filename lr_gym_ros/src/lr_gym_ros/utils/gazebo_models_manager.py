@@ -53,9 +53,9 @@ def spawn_model(xacro_file_path : str,
     ggLog.info(f"Spawning model '{model_name}'")
     urdf_string = compile_xacro(xacro_file_path,args)
     gazebo_namespace = "gazebo"
-    if format == "urdf":
+    if format == "urdf" or format == "urdf.xacro":
         spawn_model = waitService(gazebo_namespace+'/spawn_urdf_model', SpawnModel)
-    elif format=="sdf":
+    elif format=="sdf" or format == "sdf.xacro":
         spawn_model = waitService(gazebo_namespace+'/spawn_sdf_model', SpawnModel)
     else:
         raise AttributeError(f"Unexpected format value '{format}'")

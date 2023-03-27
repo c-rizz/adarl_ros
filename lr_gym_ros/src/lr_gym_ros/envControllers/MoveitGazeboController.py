@@ -8,14 +8,14 @@ from typing import List, Any, Tuple, Dict, Optional
 from lr_gym_ros.envControllers.RosEnvController import RequestFailError
 from lr_gym_ros.envControllers.MoveitRosController import MoveitRosController
 from lr_gym_ros.envControllers.GazeboController import GazeboController
-from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController
+from lr_gym.env_controllers.SimulatedEnvController import SimulatedEnvController
 
 import rospy
 import sensor_msgs
 import sensor_msgs.msg
 
 from lr_gym.utils.utils import JointState, LinkState, Pose
-
+import numpy as np
 
 class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
     """
@@ -64,12 +64,12 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
 
 
     
-    def spawn_model(self, model_definition : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = None):
-        self._gazeboController.spawn_model(model_definition = model_definition,
+    def spawn_model(self, model_file : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any] = {}, model_format = None):
+        self._gazeboController.spawn_model(model_file = model_file,
                                             pose=pose,
                                             model_name=model_name,
                                             model_kwargs=model_kwargs,
-                                            format=format)
+                                            model_format=model_format)
 
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""
@@ -110,7 +110,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
             self._gazeboController.pauseSimulation()
 
     
-    def getRenderings(self, requestedCameras : List[str]) -> List[sensor_msgs.msg.Image]: #TODO: change this to use cv2 images (i.e. ndarrays)
+    def getRenderings(self, requestedCameras : List[str]) -> List[Tuple[np.ndarray, float]]:
         try:
             r = super().getRenderings(requestedCameras=requestedCameras)
             # ggLog.info("got image from ros")

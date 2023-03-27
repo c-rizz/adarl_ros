@@ -6,7 +6,7 @@ from lr_gym_ros.envControllers.RosEnvController import RosEnvController
 from lr_gym_ros.rosControlUtils import ControllerManagementHelper
 from lr_gym_ros.rosControlUtils import TrajectoryControllerHelper
 
-from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.env_controllers.JointEffortEnvController import JointEffortEnvController
 
 import rospy
 import std_msgs.msg

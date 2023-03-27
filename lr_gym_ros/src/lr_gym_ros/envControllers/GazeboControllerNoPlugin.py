@@ -12,8 +12,8 @@ import rospy
 from std_srvs.srv import Empty
 
 from lr_gym_ros.envControllers.RosEnvController import RosEnvController
-from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
-from lr_gym.envControllers.SimulatedEnvController import SimulatedEnvController 
+from lr_gym.env_controllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.env_controllers.SimulatedEnvController import SimulatedEnvController 
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 import os
 import lr_gym.utils.dbg.ggLog as ggLog
@@ -410,19 +410,19 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             Keys are in the format (model_name, joint_name), the value is the joint state to enforce
         """
         model_configs = {}
-        for model_joint_names, joint_state in jointStates:
+        for model_joint_names, joint_state in jointStates.items():
             if model_joint_names[0] not in model_configs:
                 model_configs[model_joint_names[0]] = []
             model_configs[model_joint_names[0]].append((model_joint_names[1], joint_state))
 
         for model_name, joint_confs in model_configs.items():
-            req = gazebo_msgs.srv.SetModelConfiguration()
+            req = gazebo_msgs.srv.SetModelConfigurationRequest()
             req.model_name = model_name
-            req.join_names = []
+            req.joint_names = []
             req.joint_positions = [] # Only uses first joint position
             for jc in joint_confs:
-                req.join_names.append(jc[0])
-                if len(jc[1].position[0]) > 1:
+                req.joint_names.append(jc[0])
+                if len(jc[1].position) > 1:
                     ggLog.warn(f"GazeboController only supports setting state for 1-D joints")
                 if jc[1].rate is not None:
                     ggLog.warn(f"GazeboController does not support setting joint state rate directly")
@@ -495,35 +495,35 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         self.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
 
     
-    def spawn_model(self, model_definition : Union[str,Tuple[str,str]], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any], format = None):
-        if isinstance(model_definition, str):
-            path = model_definition
-        elif isinstance(model_definition, tuple):        
-            path = rospkg.RosPack().get_path(model_definition[0])+model_definition[1]
+    def spawn_model(self, model_file : Union[str,Tuple[str,str]], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any] = {}, model_format = None):
+        if isinstance(model_file, str):
+            path = model_file
+        elif isinstance(model_file, tuple):        
+            path = rospkg.RosPack().get_path(model_file[0])+model_file[1]
         else:
             raise AttributeError("model_definition should be either a tuple (pkg, path) or a string (path)")
 
-        if format is None:
+        if model_format is None:
             filename_split = path.split(".")
             ext = filename_split[-1]
             if ext == "urdf":
-                format = "urdf"
+                model_format = "urdf"
             elif ext == "sdf":
-                format = "sdf"
+                model_format = "sdf"
             elif ext == "xacro":
                 ext = filename_split[-2]
                 if ext == "urdf":
-                    format = "urdf"
+                    model_format = "urdf"
                 elif ext == "sdf":
-                    format = "sdf"
-            if format is None:
-                raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_definition = {model_definition}")
+                    model_format = "sdf"
+            if model_format is None:
+                raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_definition = {model_file}")
         
         spawn_model(path,
                     pose=pose,
                     model_name=model_name,
                     args=model_kwargs,
-                    format=format)
+                    format=model_format)
 
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""

@@ -15,7 +15,7 @@ import lr_gym_ros_utils.msg
 import lr_gym_ros_utils.srv
 import numpy as np
 import rospy
-from lr_gym.envControllers.CartesianPositionEnvController import CartesianPositionEnvController
+from lr_gym.env_controllers.CartesianPositionEnvController import CartesianPositionEnvController
 from lr_gym_ros.envControllers.RosEnvController import RosEnvController
 
 
@@ -177,7 +177,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
                              ee_link : Optional[str] = None, reference_frame : Optional[str] = None) -> None:
 
         goal = lr_gym_ros_utils.msg.MoveToEePoseGoal()
-        goal.pose = lr_gym.utils.utils.buildPoseStamped(eePose_xyz_xyzw[0:3],eePose_xyz_xyzw[3:7],
+        goal.pose = lr_gym.utils.utils.buildRos1PoseStamped(eePose_xyz_xyzw[0:3],eePose_xyz_xyzw[3:7],
                                                         self._referenceFrame if reference_frame is None else reference_frame)
         goal.end_effector_link = self._endEffectorLink[1] if ee_link is None else ee_link
         goal.velocity_scaling = self._default_velocity_scaling if velocity_scaling is None else velocity_scaling
@@ -350,6 +350,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
             self.moveGripperSync(self._gripperInitialWidth,20)
         self._step_count = 0
         super().resetWorld()
+        self._last_step_time = self.getEnvTimeFromStartup()
 
     def actionsFailsInLastStep(self):
         return self._actionsFailsInLastStepCounter
@@ -371,18 +372,19 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
 
     def step(self) -> float:
         """Wait the step to be completed"""
-        # ggLog.info("MoveitRosController stepping...")
 
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not step.")
         
-        t0 = rospy.get_time()
         # ggLog.info("Completing movements...")
         self._actionsFailsInLastStepCounter = self.completeAllMovements()
         # ggLog.info("Completed.")
         self._step_count += 1
+        current_time = self.getEnvTimeFromStartup()
+        step_duration = current_time - self._last_step_time
+        self._last_step_time = current_time
 
-        return rospy.get_time() - t0
+        return step_duration
 
 
     def addCollisionBox(self,   pose_xyz_xyzw : Tuple[float,float,float,float,float,float,float],

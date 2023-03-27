@@ -8,10 +8,11 @@ import lr_gym.utils.dbg.ggLog as ggLog
 import rospy
 import sensor_msgs
 import sensor_msgs.msg
-from lr_gym.envControllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.env_controllers.JointEffortEnvController import JointEffortEnvController
 from lr_gym.utils.utils import JointState, LinkState
 from lr_gym_ros.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
-
+import numpy as np
+import lr_gym.utils.utils
 
 class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
     """This class allows to control the execution of a Gazebo simulation.
@@ -192,7 +193,7 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
         return renders
 
 
-    def getRenderings(self, requestedCameras : List[str]) -> List[sensor_msgs.msg.Image]:
+    def getRenderings(self, requestedCameras : List[str]) -> List[Tuple[np.ndarray, float]]:
         # ggLog.info("GazebController.getRenderings")
         for name in requestedCameras:
             if name not in self._camerasToObserve:
@@ -208,7 +209,8 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
 
         ret = []
         for name in requestedCameras:
-            ret.append(cameraRenders[name][0])
+            rosimg = cameraRenders[name][0]
+            ret.append((lr_gym.utils.utils.ros1_image_to_numpy(rosimg), rosimg.header.stamp.to_sec()))
         return ret
 
 
