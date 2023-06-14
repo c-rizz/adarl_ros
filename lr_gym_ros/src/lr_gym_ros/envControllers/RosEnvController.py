@@ -164,7 +164,7 @@ class RosEnvController(EnvironmentController):
         self._listenersStarted = True
 
 
-    def getRenderings(self, requestedCameras : List[str]) -> List[Tuple[np.ndarray, float]]:
+    def getRenderings(self, requestedCameras : List[str]) -> Dict[str, Tuple[np.ndarray, float]]:
         """Get the images for the specified cameras.
 
         Parameters
@@ -224,7 +224,7 @@ class RosEnvController(EnvironmentController):
             raise RequestFailError(message=err, partialResult=camerasGotten)
 
 
-        return [(lr_gym.utils.utils.ros1_image_to_numpy(retDict[c]), retDict[c].header.stamp.to_sec()) for c in camerasGotten]
+        return {c : (lr_gym.utils.utils.ros1_image_to_numpy(retDict[c]), retDict[c].header.stamp.to_sec()) for c in camerasGotten}
 
 
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
@@ -386,15 +386,18 @@ class RosEnvController(EnvironmentController):
     def freerun(self, duration_sec : float):
         rospy.sleep(duration_sec)
 
-    def build_scenario(self, launch_file_pkg_and_path : Tuple[str,str],
+    def build_scenario(self, launch_file_pkg_and_path : Union[str,Tuple[str,str]],
                              launch_file_args : Dict[str,str],
                              basePort = 11350,
                              ros_master_ip = "127.0.0.1"):
-        
-        self._mmRosLauncher = lr_gym_ros_utils.ros_launch_utils.MultiMasterRosLauncher(rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+launch_file_pkg_and_path[1],
-                                                                                    cli_args=[f"{k}:={v}" for k,v in launch_file_args.items()],
-                                                                                    basePort = basePort,
-                                                                                    ros_master_ip = ros_master_ip)
+        if type(launch_file_pkg_and_path) == tuple:
+            launch_file = rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+"/"+launch_file_pkg_and_path[1]
+        else:
+            launch_file = launch_file_pkg_and_path
+        self._mmRosLauncher = lr_gym_ros_utils.ros_launch_utils.MultiMasterRosLauncher(launch_file,
+                                                                                        cli_args=[f"{k}:={v}" for k,v in launch_file_args.items()],
+                                                                                        basePort = basePort,
+                                                                                        ros_master_ip = ros_master_ip)
         self._mmRosLauncher.launchAsync()
 
 

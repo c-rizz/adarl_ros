@@ -14,11 +14,8 @@ from typing import List, Dict, Tuple
 import lr_gym_ros_utils
 import lr_gym_ros_utils.msg
 import time
+from lr_gym.utils.utils import MoveFailError
 
-
-class TrajMoveFailError(Exception):
-    def __init__(self, message):            
-        super().__init__(message)
 
 def buildServiceProxy(serviceName, msgType):
     rospy.wait_for_service(serviceName)
@@ -138,15 +135,15 @@ def move_to_initial_pose(   jointPositions : List[float],
         if moveJointClient.get_result().succeded:
             return
         else:
-            raise TrajMoveFailError(f"Failed to move to joint pose. Goal={goal}. result = "+str(moveJointClient.get_result()))
+            raise MoveFailError(f"Failed to move to joint pose. Goal={goal}. result = "+str(moveJointClient.get_result()))
     else:
         moveJointClient.cancel_goal()
         moveJointClient.cancel_all_goals()
         r = moveJointClient.wait_for_result(timeout = rospy.Duration(10.0))
         if r:
-            raise TrajMoveFailError(f"Failed to move to joint pose: action timed out. Action canceled. Goal={goal}.  Result = {moveJointClient.get_result()}")
+            raise MoveFailError(f"Failed to move to joint pose: action timed out. Action canceled. Goal={goal}.  Result = {moveJointClient.get_result()}")
         else:
-            raise TrajMoveFailError(f"Failed to move to joint pose: action timed out. Action failed to cancel. Goal={goal}")
+            raise MoveFailError(f"Failed to move to joint pose: action timed out. Action failed to cancel. Goal={goal}")
 
 
 def play(joint_trajectory, controllerNamespace, scaling = 0.5):
@@ -155,7 +152,7 @@ def play(joint_trajectory, controllerNamespace, scaling = 0.5):
 
     try:
         move_to_initial_pose(joint_trajectory.points[0].positions, velocity_scaling=0.1, acceleration_scaling=0.1, moveJointClient=moveJointClient)
-    except TrajMoveFailError as e:
+    except MoveFailError as e:
         rospy.logerr(f"play_joint_trajectory: Failed to move to intial pose, cannot start trajectory")
         raise e
 

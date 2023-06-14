@@ -13,6 +13,7 @@ from lr_gym.utils.utils import JointState, LinkState
 from lr_gym_ros.envControllers.GazeboControllerNoPlugin import GazeboControllerNoPlugin
 import numpy as np
 import lr_gym.utils.utils
+from overrides import override
 
 class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
     """This class allows to control the execution of a Gazebo simulation.
@@ -192,8 +193,8 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
 
         return renders
 
-
-    def getRenderings(self, requestedCameras : List[str]) -> List[Tuple[np.ndarray, float]]:
+    @override
+    def getRenderings(self, requestedCameras : List[str]) -> Dict[str, Tuple[np.ndarray, float]]:
         # ggLog.info("GazebController.getRenderings")
         for name in requestedCameras:
             if name not in self._camerasToObserve:
@@ -207,10 +208,10 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
             # ggLog.info("Using available renders for "+str(requestedCameras)+" step = "+str(self._simulationState.stepNumber))
             cameraRenders = self._simulationState.cameraRenders
 
-        ret = []
+        ret = {}
         for name in requestedCameras:
             rosimg = cameraRenders[name][0]
-            ret.append((lr_gym.utils.utils.ros1_image_to_numpy(rosimg), rosimg.header.stamp.to_sec()))
+            ret[name] = (lr_gym.utils.utils.ros1_image_to_numpy(rosimg), rosimg.header.stamp.to_sec())
         return ret
 
 

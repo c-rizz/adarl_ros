@@ -16,14 +16,14 @@ import lr_gym_ros_utils.srv
 import numpy as np
 import rospy
 from lr_gym.env_controllers.CartesianPositionEnvController import CartesianPositionEnvController
+from lr_gym.env_controllers.JointPositionEnvController import JointPositionEnvController
 from lr_gym_ros.envControllers.RosEnvController import RosEnvController
+from lr_gym.utils.utils import MoveFailError
+from overrides import override
+from nptyping import NDArray
 
 
-class MoveFailError(Exception):
-    def __init__(self, message):            
-        super().__init__(message)
-
-class MoveitRosController(RosEnvController, CartesianPositionEnvController):
+class MoveitRosController(RosEnvController, CartesianPositionEnvController, JointPositionEnvController):
     """This class allows to control the execution of a ROS-based environment.
 
     Allows to control the robot via cartesian end-effector control. Inverse kinematics and
@@ -83,6 +83,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         rospy.loginfo(ac.action_client.ns+" connected.")
         return ac
 
+    @override
     def startController(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
@@ -148,11 +149,13 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         else:
             self._waitOnStepCallbacks.append(waitCallback)
 
+    @override
     def setJointsPositionCommand(self,  jointPositions : Dict[Tuple[str,str],float],
                                         velocity_scaling : Optional[float] = None,
                                         acceleration_scaling : Optional[float] = None) -> None:
         self._controlJointPosition(jointPositions = jointPositions, synchronous=False, velocity_scaling=velocity_scaling, acceleration_scaling=acceleration_scaling)
-
+    
+    @override
     def moveToJointPoseSync(self,   jointPositions : Dict[Tuple[str,str],float],
                                     velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None) -> None:
@@ -212,8 +215,9 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
             self._waitOnStepCallbacks.append(waitCallback)
     
 
-
-    def setCartesianPoseCommand(self,   linkPoses : Dict[Tuple[str,str], List[float]], do_cartesian : bool = False,
+    @override
+    def setCartesianPoseCommand(self,   linkPoses : Dict[Tuple[str,str],NDArray[(7,), np.float32]],
+                                        do_cartesian : bool = False,
                                         velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None) -> None:
         """Request a set of links to be placed at a specific cartesian pose.
 
@@ -242,14 +246,20 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
                             synchronous = False,
                             do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling)
 
-    
-    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling :Optional[float] = None,
-                                acceleration_scaling : Optional[float] = None, ee_link : Optional[str] = None,
+    @override
+    def moveToEePoseSync(self,  poses : Dict[Tuple[str,str],List[float]] = None,
+                                do_cartesian = False, velocity_scaling :Optional[float] = None,
+                                acceleration_scaling : Optional[float] = None, ee_link : Optional[Tuple[str,str]] = None,
                                 reference_frame : Optional[str] = None):
-        self._controlEEPose(eePose_xyz_xyzw = pose,
+        if ee_link is None:
+            ee_link =  self._endEffectorLink
+        links = poses.keys()
+        if len(links) > 1 or ee_link not in links:
+            raise AttributeError(f"{type(self).__name__}.moveToEePoseSync only supports moving ee_link (={ee_link}), but you requested links {links}")
+        self._controlEEPose(eePose_xyz_xyzw = poses[ee_link],
                             synchronous = True,
                             do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling,
-                            ee_link = ee_link, reference_frame = reference_frame)
+                            ee_link = ee_link[1], reference_frame = reference_frame)
                             
 
 
@@ -325,7 +335,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
 
 
 
-
+    @override
     def resetWorld(self):
         # ggLog.info("Environment controller resetting world...")
         self.clearCollisionObjects()
@@ -369,7 +379,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController):
         self._waitOnStepCallbacks.clear()
         return actionFailed
 
-
+    @override
     def step(self) -> float:
         """Wait the step to be completed"""
 

@@ -12,9 +12,10 @@ import lr_gym.utils.dbg.ggLog as ggLog
 from typing import Dict, List, Tuple, Optional
 import lr_gym_ros_utils
 import lr_gym_ros
-from lr_gym_ros.envControllers.MoveitRosController import MoveFailError
+from lr_gym.utils.utils import MoveFailError
 import lr_gym.utils.beep
 from actionlib_msgs.msg import GoalStatus
+from overrides import override
 
 class PandaMoveitRosController(MoveitRosController):
     """This class allows to control the execution of a ROS-based environment.
@@ -89,6 +90,7 @@ class PandaMoveitRosController(MoveitRosController):
                 else:
                     break
 
+    @override
     def resetWorld(self):
         self._checkArmErrorAndRecover()
         try:
@@ -97,6 +99,7 @@ class PandaMoveitRosController(MoveitRosController):
             ggLog.warn(f"resetWorld failed. Will try to recover. exception = {e}")
         self._step_start_time = self.getEnvSimTimeFromStart()
 
+    @override
     def step(self) -> float:
         self._checkArmErrorAndRecover()
         try:
@@ -144,15 +147,15 @@ class PandaMoveitRosController(MoveitRosController):
                     else:
                         raise MoveFailError(f"Failed to move at {functionName} and blocking is False")
 
-
+    @override
     def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None, blocking = True) -> None:
         def function():
             super(PandaMoveitRosController,self).moveToJointPoseSync(jointPositions, velocity_scaling, acceleration_scaling)
         self._runRecoveringBlocking(function, "moveToJointPoseSync", blocking = blocking)
 
-
+    @override
     def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None,
-                                ee_link : Optional[str] = None, reference_frame : Optional[str] = None, blocking = True):
+                                ee_link : Optional[Tuple[str,str]] = None, reference_frame : Optional[str] = None, blocking = True):
         def function():
             super(PandaMoveitRosController,self).moveToEePoseSync(pose, do_cartesian, velocity_scaling, acceleration_scaling, ee_link, reference_frame)
         self._runRecoveringBlocking(function, "moveToEePoseSync", blocking = blocking)

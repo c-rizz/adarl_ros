@@ -16,6 +16,7 @@ import sensor_msgs.msg
 
 from lr_gym.utils.utils import JointState, LinkState, Pose
 import numpy as np
+from overrides import override
 
 class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
     """
@@ -49,7 +50,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
 
 
 
-
+    @override
     def startController(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
@@ -63,21 +64,27 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         self._gazeboController._makeRosConnections()
 
 
-    
-    def spawn_model(self, model_file : Tuple[str,str], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any] = {}, model_format = None):
-        self._gazeboController.spawn_model(model_file = model_file,
+    # @override
+    def spawn_model(self,   model_file : Tuple[str,str],
+                            model_name : str,
+                            pose : Pose,
+                            model_kwargs : Dict[Any,Any] = {},
+                            model_format = None) -> str:
+        return self._gazeboController.spawn_model(model_file = model_file,
                                             pose=pose,
                                             model_name=model_name,
                                             model_kwargs=model_kwargs,
                                             model_format=model_format)
-
+    @override
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""
         self._gazeboController.delete_model(model_name = model_name)
-
+    
+    @override
     def setupLight(self, *args, **kwargs):
         self._gazeboController.setupLight(*args, **kwargs)
 
+    @override
     def setJointsStateDirect(self, jointStates : Dict[Tuple[str,str],JointState]):
         """Set the state for a set of joints
 
@@ -93,7 +100,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         if wasPaused:
             self._gazeboController.pauseSimulation()
     
-
+    @override
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
         """Set the state for a set of links
 
@@ -109,8 +116,8 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         if wasPaused:
             self._gazeboController.pauseSimulation()
 
-    
-    def getRenderings(self, requestedCameras : List[str]) -> List[Tuple[np.ndarray, float]]:
+    @override
+    def getRenderings(self, requestedCameras : List[str]) -> Dict[str, Tuple[np.ndarray, float]]:
         try:
             r = super().getRenderings(requestedCameras=requestedCameras)
             # ggLog.info("got image from ros")
@@ -119,6 +126,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
             # ggLog.info("got image from gazebo plugin")
         return r
 
+    @override
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
         try:
             js = self._gazeboController.getJointsState(requestedJoints=requestedJoints)
@@ -128,6 +136,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
             js.update(e.partialResult)
         return js
 
+    @override
     def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
         try:
             ls =  self._gazeboController.getLinksState(requestedLinks=requestedLinks) # WARNING! These may not be the same frames as the urdf unes!
@@ -141,8 +150,9 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         
         # ggLog.info(f"Link state is {ls}")
         return ls
-            
-    def step(self):
+
+    @override
+    def step(self) -> float:
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not step.")
         self._gazeboController.unpauseSimulation()
@@ -150,6 +160,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         self._gazeboController.pauseSimulation()
         return r
 
+    @override
     def resetWorld(self):
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not reset.")
@@ -158,7 +169,6 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         self._gazeboController.pauseSimulation()
         return r
 
-    
     def moveGripperSync(self, width : float, max_effort : float):
         wasPaused = self._gazeboController.isPaused()
         if wasPaused:
@@ -167,17 +177,20 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         if wasPaused:
             self._gazeboController.pauseSimulation()
 
-    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling : Optional[float] = None,
-                                acceleration_scaling : Optional[float] = None, ee_link : Optional[str] = None,
+    @override
+    def moveToEePoseSync(self,  poses : Dict[Tuple[str,str],List[float]] = None,
+                                do_cartesian = False, velocity_scaling : Optional[float] = None,
+                                acceleration_scaling : Optional[float] = None, ee_link : Optional[Tuple[str,str]] = None,
                                 reference_frame : Optional[str] = None):
         wasPaused = self._gazeboController.isPaused()
         if wasPaused:
             self._gazeboController.unpauseSimulation()
-        super().moveToEePoseSync(pose = pose, do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling,
+        super().moveToEePoseSync(poses = poses, do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling,
                                 ee_link = ee_link, reference_frame = reference_frame)
         if wasPaused:
             self._gazeboController.pauseSimulation()
-    
+
+    @override
     def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None) -> None:
         wasPaused = self._gazeboController.isPaused()
@@ -187,19 +200,21 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         if wasPaused:
             self._gazeboController.pauseSimulation()
 
-    
+    @override
     def freerun(self, duration_sec : float):
         self._gazeboController.freerun(duration_sec)
 
-
+    @override
     def setJointsToObserve(self, jointsToObserve : List[Tuple[str,str]]):
        super().setJointsToObserve(jointsToObserve=jointsToObserve)
        self._gazeboController.setJointsToObserve(jointsToObserve=jointsToObserve)
 
+    @override
     def setLinksToObserve(self, linksToObserve : List[Tuple[str,str]]):
        super().setLinksToObserve(linksToObserve=linksToObserve)
        self._gazeboController.setLinksToObserve(linksToObserve=linksToObserve)
 
+    @override
     def setCamerasToObserve(self, camerasToRender : List[str] = []):
        super().setCamerasToObserve(camerasToRender=camerasToRender)
        self._gazeboController.setCamerasToObserve(camerasToRender=camerasToRender)

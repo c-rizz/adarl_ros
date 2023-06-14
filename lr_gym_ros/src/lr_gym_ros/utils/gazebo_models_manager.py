@@ -1,6 +1,7 @@
 from importlib.util import module_for_loader
 from pkg_resources import require
 from lr_gym.utils.utils import Pose
+import lr_gym.utils.utils
 
 from typing import List, Dict
 import os
@@ -38,7 +39,7 @@ def compile_xacro(xacro_file_path : str, args : Dict[str,str]):
     try:
         compiled_urdf = subprocess.check_output(["xacro", xacro_file_path]+args_str)
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Xacro compilation failed with error {e}")
+        raise RuntimeError(f"Xacro compilation failed with error. \n {e.stdout}\n {e.stderr} {lr_gym.utils.utils.exc_to_str(e)}")
     return compiled_urdf.decode("utf-8") 
 
 
@@ -50,8 +51,9 @@ def spawn_model(xacro_file_path : str,
                 reference_frame = "world",
                 format = "urdf"):
 
-    ggLog.info(f"Spawning model '{model_name}'")
+    ggLog.info(f"Spawning model '{model_name}' from file {xacro_file_path} with args {args}")
     urdf_string = compile_xacro(xacro_file_path,args)
+    ggLog.info(f"Compiled xacro is {urdf_string}")
     gazebo_namespace = "gazebo"
     if format == "urdf" or format == "urdf.xacro":
         spawn_model = waitService(gazebo_namespace+'/spawn_urdf_model', SpawnModel)
