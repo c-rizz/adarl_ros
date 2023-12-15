@@ -67,6 +67,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController, Join
         self._default_acceleration_scaling = default_acceleration_scaling
         self._defaultCollision_boxes = default_collision_objs
         self._step_count = 0
+        self._alltime_step_count = 0
 
     def _connectRosService(self, serviceName : str, msgType):
         rospy.loginfo("Waiting for service "+serviceName+"...")
@@ -186,7 +187,9 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController, Join
         goal.velocity_scaling = self._default_velocity_scaling if velocity_scaling is None else velocity_scaling
         goal.acceleration_scaling = self._default_acceleration_scaling if acceleration_scaling is None else acceleration_scaling
         goal.do_cartesian = do_cartesian
+        # ggLog.info(f"Calling _moveEeClient")
         self._moveEeClient.send_goal(goal)
+        # ggLog.info(f"Called _moveEeClient")
 
         # ggLog.info(f"Moving ee to {goal.pose}")
         dbg_pose.helper.publish("mrc_ee_goal",goal.pose)
@@ -253,6 +256,8 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController, Join
                                 reference_frame : Optional[str] = None):
         if ee_link is None:
             ee_link =  self._endEffectorLink
+        if isinstance(poses, list) and len(poses) == 7:
+            poses = {ee_link : poses} # Assume it's only one pose
         links = poses.keys()
         if len(links) > 1 or ee_link not in links:
             raise AttributeError(f"{type(self).__name__}.moveToEePoseSync only supports moving ee_link (={ee_link}), but you requested links {links}")
@@ -390,6 +395,7 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController, Join
         self._actionsFailsInLastStepCounter = self.completeAllMovements()
         # ggLog.info("Completed.")
         self._step_count += 1
+        self._alltime_step_count += 1
         current_time = self.getEnvTimeFromStartup()
         step_duration = current_time - self._last_step_time
         self._last_step_time = current_time
@@ -421,9 +427,13 @@ class MoveitRosController(RosEnvController, CartesianPositionEnvController, Join
         else:
             req.attach = False
             req.attach_link = ""
+        # ggLog.info(f"Calling _addCollisionBoxService")
         res = self._addCollisionBoxService(req)
+        # ggLog.info(f"Calling _addCollisionBoxService")
         if not res.success:
             ggLog.error(f"Failed to add collision object with req = {req}")
 
     def clearCollisionObjects(self):
+        # ggLog.info(f"Calling _clearCollisionBoxesService")
         self._clearCollsionBoxesService()
+        # ggLog.info(f"Called _clearCollisionBoxesService")

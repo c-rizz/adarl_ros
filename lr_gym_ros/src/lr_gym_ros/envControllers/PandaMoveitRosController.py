@@ -26,6 +26,8 @@ class PandaMoveitRosController(MoveitRosController):
     TODO: Now that we have python3 avoid using move_helper
     """
 
+    
+
     def startController(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
@@ -34,7 +36,8 @@ class PandaMoveitRosController(MoveitRosController):
 
 
         """
-
+        self._action_fail_count = 0
+        self._default_max_tries = 10
         super().startController()
         self._frankaStateMutex = Lock() #To synchronize _jointStateCallback with getJointsState
         self._errorRecoveryActionClient = self._connectRosAction('/franka_control/error_recovery', franka_msgs.msg.ErrorRecoveryAction)
@@ -67,14 +70,19 @@ class PandaMoveitRosController(MoveitRosController):
     def _checkArmErrorAndRecover(self, max_tries = 10, blocking = True):
         fs = self._getNewFrankaState()
         tries = 0
+        there_was_a_fail = False
+        failing_states = []
         while fs.robot_mode != franka_msgs.msg.FrankaState.ROBOT_MODE_MOVE:
-            ggLog.warn(f"Panda arm is in robot_mode {fs.robot_mode}.\n Franka state = {fs}\n Trying to recover (retries = {tries}).")
+            there_was_a_fail = True
+            failing_states.append(fs)
+            # ggLog.warn(f"Panda arm is in robot_mode {fs.robot_mode}.\n Franka state = {fs}\n Trying to recover (retries = {tries}).")
             goal = franka_msgs.msg.ErrorRecoveryGoal()
             goal_state = self._errorRecoveryActionClient.send_goal_and_wait(goal, rospy.Duration.from_sec(10.0), rospy.Duration.from_sec(10.0))
             if goal_state != GoalStatus.SUCCEEDED:
                 ggLog.warn(f"Failed to execute Panda arm recovery action. State = {goal_state}")
             else:
-                ggLog.info("Panda arm recovery action completed.")
+                pass
+                # ggLog.info("Panda arm recovery action completed.")
             fs = self._getNewFrankaState()
             rospy.sleep(0.5)
             tries += 1
@@ -89,6 +97,13 @@ class PandaMoveitRosController(MoveitRosController):
                     tries=0
                 else:
                     break
+        return there_was_a_fail, failing_states
+
+    def set_max_tries(self, max_tries):
+        self._default_max_tries = max_tries
+
+    def get_max_tries(self):
+        return self._default_max_tries
 
     @override
     def resetWorld(self):
@@ -101,7 +116,10 @@ class PandaMoveitRosController(MoveitRosController):
 
     @override
     def step(self) -> float:
-        self._checkArmErrorAndRecover()
+        there_was_a_fail, failing_states = self._checkArmErrorAndRecover()
+        if there_was_a_fail:
+            self._action_fail_count += 1
+            ggLog.info(f"There was a fail during action, fail rate = {self._action_fail_count/self._alltime_step_count}, state = {failing_states}")
         try:
             return super().step()
         except MoveFailError as e:
@@ -111,7 +129,9 @@ class PandaMoveitRosController(MoveitRosController):
         self._step_start_time = t
         return step_duration
 
-    def _runRecoveringBlocking(self, function, functionName : str, max_tries = 10, blocking = True, quiet = False):
+    def _runRecoveringBlocking(self, function, functionName : str, max_tries = None, blocking = True, quiet = False):
+        if max_tries is None:
+            max_tries = self._default_max_tries
         self._checkArmErrorAndRecover()
         done = False
         tries = 0
@@ -122,7 +142,7 @@ class PandaMoveitRosController(MoveitRosController):
             except MoveFailError as e:
                 ggLog.warn(f"{functionName} failed. exception = {e}\n"+
                             f"Trying to recover (retries = {tries}).")
-                if not quiet:
+                if not quiet or tries < max_tries*0.2: # don't beep the first two times, it's annoying
                     lr_gym.utils.beep.beep()
                 rospy.sleep(1.0)
                 self._checkArmErrorAndRecover()
@@ -154,10 +174,11 @@ class PandaMoveitRosController(MoveitRosController):
         self._runRecoveringBlocking(function, "moveToJointPoseSync", blocking = blocking)
 
     @override
-    def moveToEePoseSync(self,  pose : List[float], do_cartesian = False, velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None,
+    def moveToEePoseSync(self,  poses : Dict[Tuple[str,str],List[float]] = None,
+                                do_cartesian = False, velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None,
                                 ee_link : Optional[Tuple[str,str]] = None, reference_frame : Optional[str] = None, blocking = True):
         def function():
-            super(PandaMoveitRosController,self).moveToEePoseSync(pose, do_cartesian, velocity_scaling, acceleration_scaling, ee_link, reference_frame)
+            super(PandaMoveitRosController,self).moveToEePoseSync(poses, do_cartesian, velocity_scaling, acceleration_scaling, ee_link, reference_frame)
         self._runRecoveringBlocking(function, "moveToEePoseSync", blocking = blocking)
                          
     def moveGripperSync(self, width : float, max_effort : float):

@@ -322,17 +322,22 @@ class RosEnvController(EnvironmentController):
                     if lsMsg is not None:
                         msgAge = call_time - lsMsg.header.stamp.to_sec()
                         if msgAge < self._maxObsAge or self._maxObsAge == float("+inf"):
-                            self._linkStateMsgAgeAvg.addValue(msgAge)
 
                             # Add link state to return dict
                             if lsMsg.pose.header.frame_id != "world":
                                 raise RuntimeError("Received link pose is not in world frame! This is not supported!")
                             pose = lsMsg.pose.pose
                             twist = lsMsg.twist
-                            gottenLinks[lnm] = LinkState( position_xyz     = (pose.position.x, pose.position.y, pose.position.z),
+                            ls = LinkState( position_xyz     = (pose.position.x, pose.position.y, pose.position.z),
                                                 orientation_xyzw = (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w),
                                                 pos_velocity_xyz = (twist.linear.x, twist.linear.y, twist.linear.z),
                                                 ang_velocity_xyz = (twist.angular.x, twist.angular.y, twist.angular.z))
+                            vs = [ls.pose.position, ls.pose.orientation, ls.pos_velocity_xyz, ls.ang_velocity_xyz]
+                            if np.any([np.any(np.isnan(v)) for v in vs]) or not np.all([np.all(np.isfinite(v)) for v in vs]):
+                                ggLog.warn(f"Invalid value in LinkState, skipping: link_state = {ls}")
+                            else:
+                                gottenLinks[lnm] = ls
+                                self._linkStateMsgAgeAvg.addValue(msgAge)
             missingLinks = []
             for lnm in requestedLinks:
                 if lnm not in gottenLinks:
@@ -388,7 +393,7 @@ class RosEnvController(EnvironmentController):
 
     def build_scenario(self, launch_file_pkg_and_path : Union[str,Tuple[str,str]],
                              launch_file_args : Dict[str,str],
-                             basePort = 11350,
+                             base_port = 11350,
                              ros_master_ip = "127.0.0.1"):
         if type(launch_file_pkg_and_path) == tuple:
             launch_file = rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+"/"+launch_file_pkg_and_path[1]
@@ -396,7 +401,7 @@ class RosEnvController(EnvironmentController):
             launch_file = launch_file_pkg_and_path
         self._mmRosLauncher = lr_gym_ros_utils.ros_launch_utils.MultiMasterRosLauncher(launch_file,
                                                                                         cli_args=[f"{k}:={v}" for k,v in launch_file_args.items()],
-                                                                                        basePort = basePort,
+                                                                                        basePort = base_port,
                                                                                         ros_master_ip = ros_master_ip)
         self._mmRosLauncher.launchAsync()
 

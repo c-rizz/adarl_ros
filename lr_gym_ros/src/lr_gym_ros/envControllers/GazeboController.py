@@ -86,7 +86,10 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
 
 
     def isPaused(self):
-        return self._infoGazeboService.call().is_paused
+        # ggLog.info(f"Calling _infoGazeboService")
+        ret = self._infoGazeboService.call().is_paused
+        # ggLog.info(f"Called _infoGazeboService")
+        return ret
 
     def step(self) -> float:
         """Run the simulation for the step time and optionally get some information.
@@ -127,7 +130,9 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
         servicecalltries = 0
         while True:
             try:
+                # ggLog.info(f"Calling _stepGazeboService")
                 response = self._stepGazeboService.call(request)
+                # ggLog.info(f"Called _stepGazeboService")
                 break
             except rospy.service.ServiceException as e:
                 if servicecalltries > 60:
@@ -178,7 +183,9 @@ class GazeboController(GazeboControllerNoPlugin, JointEffortEnvController):
         req.cameras=requestedCameras
         req.request_time = time.time()
         #t0 = time.time()
+        # ggLog.info(f"Calling _renderGazeboService")
         res = self._renderGazeboService.call(req)
+        # ggLog.info(f"Calling _renderGazeboService")
         #t1 = time.time()
         #self._totalRenderTime += t1-t0
         #rospy.loginfo("Transfer time of rendering response = "+str(time.time()-res.response_time))

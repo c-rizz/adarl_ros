@@ -301,7 +301,9 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             request.effort = torque
             request.duration.secs = secs
             request.duration.nsecs = nsecs
+            # ggLog.info(f"Calling _applyJointEffortService")
             res = self._applyJointEffortService.call(request)
+            # ggLog.info(f"Called _applyJointEffortService")
             if not res.success:
                 ggLog.error("Failed applying effort for joint "+jointName+": "+res.status_message)
 
@@ -318,7 +320,9 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             gotit = False
             tries = 0
             while not gotit and tries <10:
+                # ggLog.info(f"Calling _getJointPropertiesService")
                 jointProp = self._getJointPropertiesService.call(jointName) ## TODO: this ignores the model name!
+                # ggLog.info(f"Called _getJointPropertiesService")
                 #ggLog.info("Got joint prop for "+jointName+" = "+str(jointProp))
                 gotit = jointProp.success
                 tries+=1
@@ -346,7 +350,9 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         missingLinks = []
         for link in requestedLinks:
             linkName = link[0]+"::"+link[1]
+            # ggLog.info(f"Calling _getLinkStateService")
             resp = self._getLinkStateService.call(link_name=linkName)
+            # ggLog.info(f"Called _getLinkStateService")
 
             if resp.success:
                 linkState = LinkState(  position_xyz = (resp.link_state.pose.position.x, resp.link_state.pose.position.y, resp.link_state.pose.position.z),
@@ -432,7 +438,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
                 resp = self._setJointStateService(req)
                 
                 if not resp.success:
-                    ggLog.error(f"Failed setting joint state for model {req.model_name}, joints = {req.join_names}, positions = {req.joint_positions}, error = "+resp.status_message)
+                    ggLog.error(f"Failed setting joint state for model {req.model_name}, joints = {req.joint_names}, positions = {req.joint_positions}, error = "+resp.status_message)
     
 
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
@@ -481,7 +487,9 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
 
     
     def setupLight(self, gz_req : gazebo_msgs.srv.SetLightPropertiesRequest):
+        # ggLog.info(f"Calling _setLightPropertiesService")
         res = self._setLightPropertiesService.call(gz_req)
+        # ggLog.info(f"Called _setLightPropertiesService")
         if not res.success:
             ggLog.error(f"GazeboControllerNoPlugin: failed to setup Light.\n req = {gz_req}\n res={res}")
             return False
@@ -490,7 +498,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
     
     def build_scenario(self, launch_file_pkg_and_path : Tuple[str,str],
                              launch_file_args : Dict[str,str]):
-        
+        os.environ["IGN_IP"] = "127.0.0.1" # to avoid "Exception sending a multicast message:Network is unreachable" errors when changing network things
         super().build_scenario(launch_file_pkg_and_path=launch_file_pkg_and_path, launch_file_args=launch_file_args)
         self.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
 
