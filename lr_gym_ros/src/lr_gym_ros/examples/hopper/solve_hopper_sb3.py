@@ -14,8 +14,8 @@ from pybullet_envs.gym_locomotion_envs import HopperBulletEnv
 
 from lr_gym.envs.HopperEnv import HopperEnv
 from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
-from lr_gym.env_controllers.PyBulletController import PyBulletController
-from lr_gym_ros.envControllers.GazeboController import GazeboController
+from lr_gym.adapters.PyBulletAdapter import PyBulletAdapter
+from lr_gym_ros.adapters.GazeboAdapter import GazeboAdapter
 
 def main(usePyBullet : bool = False,
         useMjcfFile : bool = False,
@@ -40,9 +40,9 @@ def main(usePyBullet : bool = False,
         env = HopperBulletEnv(render=True)
     else:
         if usePyBullet:
-            simulatorController = PyBulletController()
+            simulatorController = PyBulletAdapter()
         else:
-            simulatorController = GazeboController(stepLength_sec = stepLength_sec)
+            simulatorController = GazeboAdapter(stepLength_sec = stepLength_sec)
         if saveVideo:
             env = GymEnvWrapper(HopperEnv(  simulatorController = simulatorController,
                                             stepLength_sec = stepLength_sec,

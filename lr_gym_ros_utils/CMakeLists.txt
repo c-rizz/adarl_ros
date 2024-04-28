@@ -11,7 +11,6 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  lr_panda_moveit_config
   moveit_core
   moveit_ros_planning
   moveit_ros_planning_interface
@@ -96,7 +95,6 @@ catkin_package(
     roscpp
     rospy
     std_msgs
-    lr_panda_moveit_config
     moveit_core
     moveit_visual_tools
     moveit_ros_planning_interface

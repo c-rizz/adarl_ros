@@ -1,14 +1,14 @@
 """
-This file implements the MoveitGazeboController class.
+This file implements the MoveitGazeboAdapter class.
 """
 
 
 from typing import List, Any, Tuple, Dict, Optional
 
-from lr_gym_ros.envControllers.RosEnvController import RequestFailError
-from lr_gym_ros.envControllers.MoveitRosController import MoveitRosController
-from lr_gym_ros.envControllers.GazeboController import GazeboController
-from lr_gym.env_controllers.SimulatedEnvController import SimulatedEnvController
+from lr_gym_ros.adapters.RosAdapter import RequestFailError
+from lr_gym_ros.adapters.MoveitRosAdapter import MoveitRosAdapter
+from lr_gym_ros.adapters.GazeboAdapter import GazeboAdapter
+from lr_gym.adapters.SimulationAdapter import SimulationAdapter
 
 import rospy
 import sensor_msgs
@@ -18,7 +18,7 @@ from lr_gym.utils.utils import JointState, LinkState, Pose
 import numpy as np
 from overrides import override
 
-class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
+class MoveitGazeboAdapter(MoveitRosAdapter, SimulationAdapter):
     """
     """
 
@@ -36,7 +36,7 @@ class MoveitGazeboController(MoveitRosController, SimulatedEnvController):
         """Initialize the environment controller.
 
         """
-        self._gazeboController = GazeboController() #Could do with multiple inheritance but this is more readable
+        self._gazeboController = GazeboAdapter() #Could do with multiple inheritance but this is more readable
         super().__init__(   jointsOrder = jointsOrder,
                             endEffectorLink = endEffectorLink,
                             referenceFrame = referenceFrame,

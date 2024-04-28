@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""This file implements the MoveitRosController class."""
+"""This file implements the MoveitRosAdapter class."""
 
 from typing import Dict, List, Optional, Tuple
 
@@ -15,15 +15,15 @@ import lr_gym_ros_utils.msg
 import lr_gym_ros_utils.srv
 import numpy as np
 import rospy
-from lr_gym.env_controllers.CartesianPositionEnvController import CartesianPositionEnvController
-from lr_gym.env_controllers.JointPositionEnvController import JointPositionEnvController
-from lr_gym_ros.envControllers.RosEnvController import RosEnvController
+from lr_gym.adapters.CartesianPositionEnvAdapter import CartesianPositionEnvAdapter
+from lr_gym.adapters.JointPositionEnvAdapter import JointPositionEnvAdapter
+from lr_gym_ros.adapters.RosAdapter import RosAdapter
 from lr_gym.utils.utils import MoveFailError
 from overrides import override
 from nptyping import NDArray
 
 
-class MoveitRosController(RosEnvController, CartesianPositionEnvController, JointPositionEnvController):
+class MoveitRosAdapter(RosAdapter, CartesianPositionEnvAdapter, JointPositionEnvAdapter):
     """This class allows to control the execution of a ROS-based environment.
 
     Allows to control the robot via cartesian end-effector control. Inverse kinematics and

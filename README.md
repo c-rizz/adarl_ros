@@ -28,7 +28,7 @@ The implementation of the environments has been split in two logically separated
 * The environment classes, derived from envs/BaseEnv, define the environment in its high-level
  characteristics. Such as the state/observation definition, the reward function definition and
  the initial state.
-* The environment controllers, derived from EnvironmentController define the low-level, interfacing
+* The environment controllers, derived from BaseAdapter define the low-level, interfacing
  with the simulators or with the real world.
 
 This is not possible for all cases, but environment controllers are meant to be interchangeable. This can
@@ -37,16 +37,16 @@ simulators, or even in the real world. An example of this is the HopperEnv envir
 both Gazebo and PyBullet.
 
 Different environment controllers have been implemented for different simulators and for the real world.
-All of the environments controllers are derived form EnvironmentController
+All of the environments controllers are derived form BaseAdapter
 
-* **GazeboController** and **GazeboControllerNoPlugin** provide the means to control a Gazebo simulation
-* **PyBulletController** allows to control a PyBullet simulation
-* **RosEnvController** uses ROS to control and observe the environment, this is meant to be usable both for
-simulations and for the real world (but it will be less efficient and "precise" than GazeboController)
-* **EffortRosControlController** is built on top of RosEnvController and uses ros_control effort controllers to
+* **GazeboAdapter** and **GazeboAdapterNoPlugin** provide the means to control a Gazebo simulation
+* **PyBulletAdapter** allows to control a PyBullet simulation
+* **RosAdapter** uses ROS to control and observe the environment, this is meant to be usable both for
+simulations and for the real world (but it will be less efficient and "precise" than GazeboAdapter)
+* **EffortRosControlAdapter** is built on top of RosAdapter and uses ros_control effort controllers to
 command joint efforts
-* **MoveitRosController** is built on top of RosEnvController and uses MoveIt to control a robot in cartesian space
-* **MoveitGazeboController** is build on top of MoveitRosController and GazeboController, it integrates the moveit-based
+* **MoveitRosAdapter** is built on top of RosAdapter and uses MoveIt to control a robot in cartesian space
+* **MoveitGazeboAdapter** is build on top of MoveitRosAdapter and GazeboAdapter, it integrates the moveit-based
  control with useful methods only available in simulation
 
 There are various environments already implemented, you can find them in the `lr_gym_ros/src/lr_gyn/envs` folder.

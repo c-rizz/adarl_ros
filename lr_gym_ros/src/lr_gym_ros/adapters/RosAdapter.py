@@ -11,13 +11,13 @@ import lr_gym_ros_utils.ros_launch_utils
 import rospkg
 import rospy
 import sensor_msgs.msg
-from lr_gym.env_controllers.EnvironmentController import EnvironmentController
+from lr_gym.adapters.BaseAdapter import BaseAdapter
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 from lr_gym_ros_utils.msg import LinkStates
 import numpy as np
 
 
-class RosEnvController(EnvironmentController):
+class RosAdapter(BaseAdapter):
     """This class allows to control the execution of a ROS-based environment.
 
     This is meant to be able to control both simulated and real environments, by using ROS.
@@ -66,13 +66,13 @@ class RosEnvController(EnvironmentController):
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not step.")
         #TODO: it may make sense to keep track of the time spend in the rest of the processing
-        sleepDuration = self._stepLength_sec - (rospy.get_time() - self._lastStepEnd)
+        sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._lastStepEnd)
         if sleepDuration > 0:
             #rospy.loginfo("Sleeping "+str(sleepDuration))
-            rospy.sleep(sleepDuration)
+            self.freerun(sleepDuration)
         else:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
-        self._lastStepEnd = rospy.get_time()
+        self._lastStepEnd = self.getEnvTimeFromStartup()
         #rospy.loginfo("Slept")
         return self._stepLength_sec if sleepDuration > 0 else self._stepLength_sec-sleepDuration
 
@@ -140,7 +140,7 @@ class RosEnvController(EnvironmentController):
         lr_gym.utils.utils.setupSigintHandler()
 
         self._simTimeStart = rospy.get_time() #Will be overwritten by resetWorld
-        self._lastStepEnd = self._simTimeStart #Will be overwritten by resetWorld
+        self._lastStepEnd = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
 
         self._imageSubscribers = []
         for cam_topic in self._camerasToObserve:
@@ -240,7 +240,7 @@ class RosEnvController(EnvironmentController):
 
 
 
-            # ggLog.info("RosEnvController.getJointsState() called")
+            # ggLog.info("RosAdapter.getJointsState() called")
 
             call_time = rospy.get_time()
 
@@ -371,17 +371,11 @@ class RosEnvController(EnvironmentController):
         # ggLog.info("Average link_state wait ="+str(self._linkMsgWaitAvg.getAverage()))
         # ggLog.info("Average joint_state wait ="+str(self._jointMsgWaitAvg.getAverage()))
         # ggLog.info("Average camera image wait ="+str(self._cameraMsgWaitAvg.getAverage()))
-        self._simTimeStart = rospy.get_time()
-        self._lastStepEnd = self._simTimeStart
+        self._lastStepEnd = self.getEnvTimeFromStartup()
 
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not reset.")
 
-
-    def getEnvSimTimeFromStart(self) -> float:
-        t = rospy.get_time() - self._simTimeStart
-        #rospy.loginfo("t = "+str(t)+" ("+str(rospy.get_time())+"-"+str(self._simTimeStart)+")")
-        return t
 
     def getEnvTimeFromStartup(self) -> float:
         t = rospy.get_time() - self._simTimeStart

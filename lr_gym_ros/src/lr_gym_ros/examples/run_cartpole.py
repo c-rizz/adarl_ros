@@ -2,7 +2,7 @@
 
 from lr_gym.envs.CartpoleEnv import CartpoleEnv
 from lr_gym.envs.GymEnvWrapper import GymEnvWrapper
-from lr_gym_ros.envControllers.GazeboController import GazeboController
+from lr_gym_ros.adapters.GazeboAdapter import GazeboAdapter
 import lr_gym.utils.utils
 import time
 import numpy as np
@@ -81,7 +81,7 @@ def main():
     render = True
     stepLength_sec = 0.05
     env = GymEnvWrapper(CartpoleEnv(startSimulation=True,
-                                    environmentController = GazeboController(stepLength_sec=stepLength_sec),
+                                    environmentController = GazeboAdapter(stepLength_sec=stepLength_sec),
                                     render=render))
 
     images = [] if render else None

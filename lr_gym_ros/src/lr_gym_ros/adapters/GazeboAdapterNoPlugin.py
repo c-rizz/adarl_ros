@@ -11,9 +11,9 @@ import rosgraph_msgs.msg
 import rospy
 from std_srvs.srv import Empty
 
-from lr_gym_ros.envControllers.RosEnvController import RosEnvController
-from lr_gym.env_controllers.JointEffortEnvController import JointEffortEnvController
-from lr_gym.env_controllers.SimulatedEnvController import SimulatedEnvController 
+from lr_gym_ros.adapters.RosAdapter import RosAdapter
+from lr_gym.adapters.JointEffortEnvAdapter import JointEffortEnvAdapter
+from lr_gym.adapters.SimulationAdapter import SimulationAdapter 
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 import os
 import lr_gym.utils.dbg.ggLog as ggLog
@@ -23,7 +23,7 @@ import rospkg
 import lr_gym.utils
 import lr_gym.utils.utils
 
-class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, SimulatedEnvController):
+class GazeboAdapterNoPlugin(RosAdapter, JointEffortEnvAdapter, SimulationAdapter):
     """This class allows to control the execution of a Gazebo simulation.
 
     It only uses the default gazebo plugins which are usually included in the installation.
@@ -309,7 +309,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
 
 
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
-        #ggLog.info("GazeboControllerNoPlugin.getJointsState() called")
+        #ggLog.info("GazeboAdapterNoPlugin.getJointsState() called")
         gottenJoints = {}
         missingJoints = []
         for joint in requestedJoints:
@@ -331,7 +331,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
                 gottenJoints[(modelName,jointName)] = jointState
             else:
                 missingJoints.append(joint)
-                # err = "GazeboControllerNoPlugin: Failed to get state for joint '"+str(jointName)+"' of model '"+str(modelName)+"'"
+                # err = "GazeboAdapterNoPlugin: Failed to get state for joint '"+str(jointName)+"' of model '"+str(modelName)+"'"
                 # ggLog.error(err)
                 # raise RuntimeError(err)
 
@@ -391,7 +391,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
     #                     robot_namespace = "", 
     #                     reference_frame = "world",
     #                     format = "urdf"):
-    #     """Spawn a model in the environment, arguments depend on the type of SimulatedEnvController
+    #     """Spawn a model in the environment, arguments depend on the type of SimulationAdapter
     #     """
     #     spawn_model(xacro_file_path = xacro_file_path,
     #                     pose = pose, 
@@ -429,11 +429,11 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
             for jc in joint_confs:
                 req.joint_names.append(jc[0])
                 if len(jc[1].position) > 1:
-                    ggLog.warn(f"GazeboController only supports setting state for 1-D joints")
+                    ggLog.warn(f"GazeboAdapter only supports setting state for 1-D joints")
                 if jc[1].rate is not None:
-                    ggLog.warn(f"GazeboController does not support setting joint state rate directly")
+                    ggLog.warn(f"GazeboAdapter does not support setting joint state rate directly")
                 if jc[1].effort is not None:
-                    ggLog.warn(f"GazeboController does not support setting joint state effort directly")
+                    ggLog.warn(f"GazeboAdapter does not support setting joint state effort directly")
                 req.joint_positions.append(jc[1].position[0])
                 resp = self._setJointStateService(req)
                 
@@ -491,7 +491,7 @@ class GazeboControllerNoPlugin(RosEnvController, JointEffortEnvController, Simul
         res = self._setLightPropertiesService.call(gz_req)
         # ggLog.info(f"Called _setLightPropertiesService")
         if not res.success:
-            ggLog.error(f"GazeboControllerNoPlugin: failed to setup Light.\n req = {gz_req}\n res={res}")
+            ggLog.error(f"GazeboAdapterNoPlugin: failed to setup Light.\n req = {gz_req}\n res={res}")
             return False
         return True
 

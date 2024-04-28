@@ -1,17 +1,17 @@
-"""This file implements the EffortRosControlController class."""
+"""This file implements the EffortRosControlAdapter class."""
 #!/usr/bin/env python3
 from typing import List, Tuple, Dict, Union
 
-from lr_gym_ros.envControllers.RosEnvController import RosEnvController
+from lr_gym_ros.adapters.RosAdapter import RosAdapter
 from lr_gym_ros.rosControlUtils import ControllerManagementHelper
 from lr_gym_ros.rosControlUtils import TrajectoryControllerHelper
 
-from lr_gym.env_controllers.JointEffortEnvController import JointEffortEnvController
+from lr_gym.adapters.JointEffortEnvAdapter import JointEffortEnvAdapter
 
 import rospy
 import std_msgs.msg
 
-class EffortRosControlController(RosEnvController, JointEffortEnvController):
+class EffortRosControlAdapter(RosAdapter, JointEffortEnvAdapter):
     """This class allows to control the execution of a ROS-based environment.
 
     Controls robot joints using ros_control's effort controllers and trajectory controllers.
@@ -114,7 +114,7 @@ class EffortRosControlController(RosEnvController, JointEffortEnvController):
 
         self._controllerManagementHelper.waitForControllersLoad(self._effortControllersInfos.keys())
         self._controllerManagementHelper.waitForControllersLoad(self._trajectoryControllersInfos.keys())
-        rospy.loginfo("EffortRosControlController: controllers are loaded.")
+        rospy.loginfo("EffortRosControlAdapter: controllers are loaded.")
 
         self._effortControllerPubs = {}
         for controllerName in self._effortControllersInfos.keys():
@@ -141,12 +141,12 @@ class EffortRosControlController(RosEnvController, JointEffortEnvController):
             self._effortControllerPubs[controllerName].publish(commandMsg)
 
     def resetWorld(self):
-        rospy.logdebug("EffortRosControlController: switching to trajectory controllers")
+        rospy.logdebug("EffortRosControlAdapter: switching to trajectory controllers")
         trajectoryControllers = list(self._trajectoryControllersInfos.keys())
         effortControllers = list(self._effortControllersInfos.keys())
         self._controllerManagementHelper.switchControllers(trajectoryControllers, effortControllers)
         self._controllerManagementHelper.waitForControllersStart(trajectoryControllers)
-        rospy.logdebug("EffortRosControlController: trajectory controllers started")
+        rospy.logdebug("EffortRosControlAdapter: trajectory controllers started")
 
 
         for tch in self._trajectoryControllerHelpers.values():
@@ -154,9 +154,9 @@ class EffortRosControlController(RosEnvController, JointEffortEnvController):
             tch.moveToJointPosition(setup[0],setup[1], 1)
 
 
-        rospy.logdebug("EffortRosControlController: switching to effort controllers")
+        rospy.logdebug("EffortRosControlAdapter: switching to effort controllers")
         self._controllerManagementHelper.switchControllers(effortControllers, trajectoryControllers)
         self._controllerManagementHelper.waitForControllersStart(effortControllers)
-        rospy.logdebug("EffortRosControlController: effort controllers started")
+        rospy.logdebug("EffortRosControlAdapter: effort controllers started")
 
         self._simTimeStart = rospy.get_time()

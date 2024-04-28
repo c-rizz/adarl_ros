@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-"""This file implements the PandaMoveitRosController class."""
+"""This file implements the PandaMoveitRosAdapter class."""
 
-from lr_gym_ros.envControllers.MoveitRosController import MoveitRosController
+from lr_gym_ros.adapters.MoveitRosAdapter import MoveitRosAdapter
 
 import rospy
 import franka_msgs.msg
@@ -17,7 +17,7 @@ import lr_gym.utils.beep
 from actionlib_msgs.msg import GoalStatus
 from overrides import override
 
-class PandaMoveitRosController(MoveitRosController):
+class PandaMoveitRosAdapter(MoveitRosAdapter):
     """This class allows to control the execution of a ROS-based environment.
 
     Allows to control the robot via cartesian end-effector control. Inverse kinematics and
@@ -170,7 +170,7 @@ class PandaMoveitRosController(MoveitRosController):
     @override
     def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None, blocking = True) -> None:
         def function():
-            super(PandaMoveitRosController,self).moveToJointPoseSync(jointPositions, velocity_scaling, acceleration_scaling)
+            super(PandaMoveitRosAdapter,self).moveToJointPoseSync(jointPositions, velocity_scaling, acceleration_scaling)
         self._runRecoveringBlocking(function, "moveToJointPoseSync", blocking = blocking)
 
     @override
@@ -178,12 +178,12 @@ class PandaMoveitRosController(MoveitRosController):
                                 do_cartesian = False, velocity_scaling : Optional[float] = None, acceleration_scaling : Optional[float] = None,
                                 ee_link : Optional[Tuple[str,str]] = None, reference_frame : Optional[str] = None, blocking = True):
         def function():
-            super(PandaMoveitRosController,self).moveToEePoseSync(poses, do_cartesian, velocity_scaling, acceleration_scaling, ee_link, reference_frame)
+            super(PandaMoveitRosAdapter,self).moveToEePoseSync(poses, do_cartesian, velocity_scaling, acceleration_scaling, ee_link, reference_frame)
         self._runRecoveringBlocking(function, "moveToEePoseSync", blocking = blocking)
                          
     def moveGripperSync(self, width : float, max_effort : float):
         def function():
-            super(PandaMoveitRosController,self).moveGripperSync(width, max_effort)
+            super(PandaMoveitRosAdapter,self).moveGripperSync(width, max_effort)
         self._runRecoveringBlocking(function, "moveGripperSync")
 
 
