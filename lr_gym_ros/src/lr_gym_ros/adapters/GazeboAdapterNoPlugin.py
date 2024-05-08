@@ -12,8 +12,8 @@ import rospy
 from std_srvs.srv import Empty
 
 from lr_gym_ros.adapters.RosAdapter import RosAdapter
-from lr_gym.adapters.JointEffortEnvAdapter import JointEffortEnvAdapter
-from lr_gym.adapters.SimulationAdapter import SimulationAdapter 
+from lr_gym.adapters.BaseJointEffortAdapter import BaseJointEffortAdapter
+from lr_gym.adapters.BaseSimulationAdapter import BaseSimulationAdapter 
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 import os
 import lr_gym.utils.dbg.ggLog as ggLog
@@ -23,7 +23,7 @@ import rospkg
 import lr_gym.utils
 import lr_gym.utils.utils
 
-class GazeboAdapterNoPlugin(RosAdapter, JointEffortEnvAdapter, SimulationAdapter):
+class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAdapter):
     """This class allows to control the execution of a Gazebo simulation.
 
     It only uses the default gazebo plugins which are usually included in the installation.
@@ -391,7 +391,7 @@ class GazeboAdapterNoPlugin(RosAdapter, JointEffortEnvAdapter, SimulationAdapter
     #                     robot_namespace = "", 
     #                     reference_frame = "world",
     #                     format = "urdf"):
-    #     """Spawn a model in the environment, arguments depend on the type of SimulationAdapter
+    #     """Spawn a model in the environment, arguments depend on the type of BaseSimulationAdapter
     #     """
     #     spawn_model(xacro_file_path = xacro_file_path,
     #                     pose = pose, 

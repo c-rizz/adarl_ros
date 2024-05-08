@@ -8,7 +8,7 @@ from typing import List, Any, Tuple, Dict, Optional
 from lr_gym_ros.adapters.RosAdapter import RequestFailError
 from lr_gym_ros.adapters.MoveitRosAdapter import MoveitRosAdapter
 from lr_gym_ros.adapters.GazeboAdapter import GazeboAdapter
-from lr_gym.adapters.SimulationAdapter import SimulationAdapter
+from lr_gym.adapters.BaseSimulationAdapter import BaseSimulationAdapter
 
 import rospy
 import sensor_msgs
@@ -18,7 +18,7 @@ from lr_gym.utils.utils import JointState, LinkState, Pose
 import numpy as np
 from overrides import override
 
-class MoveitGazeboAdapter(MoveitRosAdapter, SimulationAdapter):
+class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
     """
     """
 

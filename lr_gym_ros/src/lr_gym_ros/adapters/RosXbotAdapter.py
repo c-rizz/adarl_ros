@@ -7,24 +7,165 @@ from typing import Dict, List, Tuple, Union
 import lr_gym.utils.beep
 import lr_gym.utils.dbg.ggLog as ggLog
 import lr_gym.utils.utils
-import lr_gym_ros_utils.ros_launch_utils
 import rospkg
 import rospy
 import sensor_msgs.msg
-from lr_gym.adapters.BaseAdapter import BaseAdapter
+from lr_gym_ros.adapters.RosAdapter import RosAdapter
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
-from lr_gym_ros_utils.msg import LinkStates
 import numpy as np
 
+from xbot_interface import config_options as opt
+from xbot_interface import xbot_interface as xbot
+from urdf_parser_py.urdf import URDF
 
-class RosAdapter(BaseAdapter):
-    """This class allows to control the execution of a ROS-based environment.
+from std_srvs.srv import SetBool
+from xbot_msgs.srv import PluginStatus, SetControlMask
+from xbot_msgs.msg import JointDeviceInfo
+import torch as th
+from lr_gym.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
+from typing_extensions import override
+from cartesian_interface.affine3 import Affine3 # needed by xbot_interface as it doesn't import it correctly
+import traceback
 
-    This is meant to be able to control both simulated and real environments, by using ROS.
-
+def build_xbot_cfg(is_floating_base):
     """
+    A function to construct the xbotinterface config object from ros
+    """
+    t0 = time.monotonic()
+    while True:
+        urdf = rospy.get_param('/xbotcore/robot_description', default=None) # type: ignore
+        if urdf is not None:
+            break
+        if time.monotonic() - t0 > 30:
+            raise TimeoutError()
+        time.sleep(0.2)
+    srdf = rospy.get_param('/xbotcore/robot_description_semantic') # type: ignore
+    if not isinstance(urdf, str):
+        raise RuntimeError(f"URDF is not a string, it's a {type(urdf)}")
+    if not isinstance(srdf, str):
+        raise RuntimeError(f"SRDF is not a string, it's a {type(srdf)}")
+    cfg = opt.ConfigOptions()
+    cfg.set_urdf(urdf)
+    cfg.set_srdf(srdf)
+    cfg.generate_jidmap()
+    cfg.set_bool_parameter('is_model_floating_base', is_floating_base)
+    cfg.set_string_parameter('model_type', 'RBDL')
+    cfg.set_string_parameter('framework', 'ROS')    
+    return cfg
 
-    def __init__(   self, stepLength_sec : float = 0.001, forced_ros_master_uri : Union[str, None] = None, maxObsDelay = float("+inf"), blocking_observation = False):
+
+def get_link_names(robot):
+    urdf = URDF.from_xml_string(robot.getUrdfString())
+    print(urdf.links)
+    lnames = [l.name for l in urdf.links]
+    return lnames
+
+def get_system_recap_string(robot):
+    robot.sense()  # update robot pose
+    jnames = robot.getEnabledJointNames()   # get list of joint names
+    ret = f"XBot URDF:\n{robot.getUrdfString()}"
+    ret += f"\nJoint names = {jnames}"
+
+    lnames = get_link_names(robot)
+    ret += f"\nlinks = {lnames}"
+    for lname in lnames:
+        indent = "\n    "
+        n = "\n"
+        ret += f"\n{lname} pose: {indent+str(robot.model().getPose(lname)).replace(n, indent)}"
+
+    jpos = robot.getJointPosition()  # get actual joint position
+    jref = robot.getPositionReference()  # get actual position reference
+
+    for n, q, qref in zip(jnames, jpos, jref):
+        ret += f"\n{n}: {q} vs {qref}"
+    return ret
+
+
+def setup_control():
+    control_mask_srv_name = "/xbotcore/joint_master/set_control_mask"
+    enable_filter_srv_name = "/xbotcore/enable_joint_filter"
+    rospy.wait_for_service(control_mask_srv_name)
+    control_mask_srv = rospy.ServiceProxy(control_mask_srv_name, SetControlMask)
+    rospy.wait_for_service(enable_filter_srv_name)
+    enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
+    filters_active = False
+    joint_active = False
+    while not filters_active or not joint_active:
+        topic_name = "/xbotcore/joint_device_info"
+        jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
+        if not isinstance(jdi, JointDeviceInfo):
+            raise RuntimeError(f"Unexpeced type received from {topic_name}, should be JointDeviceInfo but it's {type(jdi)}")
+        filters_active = jdi.filter_active
+        joint_active = jdi.mask!=0
+        if not filters_active:
+            ggLog.info(f"Enabling filters...")
+            resp = enable_filter_srv(True)
+            if not resp.success:
+                raise RuntimeError(f"Failed to enable filters: {resp}")
+            print(f"Enabled joint filter")
+        if filters_active and not joint_active:
+            ggLog.info(f"Enabling control...")
+            resp = control_mask_srv(ctrl_mask = 255)
+            if not resp.success:
+                raise RuntimeError(f"Failed to set control mask: {resp}")
+            print(f"Enabled joint control")
+
+
+def start_control():
+    switch_srv_name = "/xbotcore/ros_control/switch"
+    state_srv_name = "/xbotcore/ros_control/state"
+    rospy.wait_for_service(switch_srv_name)
+    ros_ctrl_switch = rospy.ServiceProxy(switch_srv_name, SetBool)
+    rospy.wait_for_service(state_srv_name)
+    ros_ctrl_state = rospy.ServiceProxy(state_srv_name, PluginStatus)
+
+
+    running = False
+    while not running:
+        try:
+            resp = ros_ctrl_state()
+        except rospy.ServiceException as e:
+            print(f"ros_ctrl_state call failed: {e}")
+            exit()
+        running = resp.status == "Running"
+        if not running:
+            try:
+                resp = ros_ctrl_switch(True)
+            except rospy.ServiceException as e:
+                print(f"ros_ctrl_switch call failed: {e}")
+                exit()
+            print(f"ros_ctrl_switch service responded {resp}")        
+        time.sleep(0.5)
+    print(f"ros_control state: {resp}")
+
+
+def is_simulated():
+    # Is here some better way to do this?
+    # Can I ask xbot?
+    topic_names = [t[0] for t in rospy.get_published_topics()]
+    if "/gazebo/link_states" in topic_names:
+        return True
+    else:
+        return False
+
+
+
+
+
+
+class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter):
+
+    def __init__(self,  model_name : str,
+                        stepLength_sec : float,
+                        forced_ros_master_uri : Union[str, None] = None,
+                        maxObsDelay = float("+inf"),
+                        blocking_observation = False,
+                        is_floating_base : bool = True,
+                        reference_frame : str = "world",
+                        torch_device : th.device = th.device("cpu"),
+                        fallback_cmd_stiffness : float = 200.0,
+                        fallback_cmd_damping : float= 100.0,
+                        allow_fallback : bool = True):
         """Initialize the Simulator controller.
 
         Raises
@@ -33,156 +174,167 @@ class RosAdapter(BaseAdapter):
             If it fails to find the gazebo services
 
         """
-        super().__init__()
-        self._stepLength_sec = stepLength_sec
+        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation)
+        self._is_floating_base = is_floating_base
+        self._model_name = model_name
+        self._reference_frame = reference_frame
+        self._torch_device = torch_device
+        self._commanded_joint_impedances_by_name : Dict[Tuple[str,str], Tuple[float,float,float,float,float]]= {}
+        self._joint_cmd_fallback_by_jid = {}
+        self._fallback_cmd_stiffness = fallback_cmd_stiffness
+        self._fallback_cmd_damping = fallback_cmd_damping
+        self._allow_fallback = allow_fallback
 
-        self._forced_ros_master_uri = forced_ros_master_uri
-        self._listenersStarted = False
-
-        self._lastImagesReceived = {}
-        self._lastJointStatesReceived = None
-        # self._lastLinkStatesReceived = None
-        self._linkStates = {}
-
-        self._jointStatesMutex = Lock() #To synchronize _jointStateCallback with getJointsState
-        self._linkStatesMutex = Lock() #To synchronize _jointStateCallback with getJointsState
-
-        self._jointStateMsgAgeAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
-        self._linkStateMsgAgeAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
-        self._cameraMsgAgeAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
-
-        self._cameraMsgWaitAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
-        self._linkMsgWaitAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
-        self._jointMsgWaitAvg = lr_gym.utils.utils.AverageKeeper(bufferSize = 100)
-
-        self._maxObsAge = maxObsDelay
-        self._blocking_observation = blocking_observation
-        self._mmRosLauncher : lr_gym_ros_utils.ros_launch_utils.MultiMasterRosLauncher = None
-
-
+    def setJointsToObserve(self, jointsToObserve: List[Tuple[str]]):
+        self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
 
     def startController(self):
-        """Start the ROS listeners for receiving images, link states and joint states.
+        super().startController()
 
-        The topics to listen to must be specified using the setCamerasToObserve, setJointsToObserve, and setLinksToObserve methods
-
-        Returns
-        -------
-        type
-            Description of returned object.
-
-        Raises
-        -------
-        ExceptionName
-            Why the exception is raised.
-
-        """
-
-        if self._forced_ros_master_uri is not None:
-            os.environ['ROS_MASTER_URI'] = self._forced_ros_master_uri
-
-        # init_node uses use_sim_time to determine which time to use, but I can't
-        # find a reliable way for it to be set before init_node is being called
-        # So we wait for it to be set to either true or false
-        useSimTime = None
-        while useSimTime is None:
-            try:
-                useSimTime = rospy.get_param("/use_sim_time")
-            except KeyError:
-                ggLog.warn("Could not get /use_sim_time. Will retry")
-                time.sleep(1)
-            except ConnectionRefusedError:
-                ggLog.error("No connection to ROS parameter server. Will retry")
-                time.sleep(1)
-
-        rospy.init_node('ros_env_controller', anonymous=True)
-        lr_gym.utils.utils.setupSigintHandler()
-
-        self._simTimeStart = rospy.get_time() #Will be overwritten by resetWorld
-        self._lastStepEnd = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
-
-        self._imageSubscribers = []
-        for cam_topic in self._camerasToObserve:
-            self._lastImagesReceived[cam_topic] = None
-            self._imageSubscribers.append(rospy.Subscriber(cam_topic, sensor_msgs.msg.Image, self._imagesCallback, callback_args=(self,cam_topic)))
-            ggLog.info(f"Subscribed to {cam_topic}")
-
-        if len(self._jointsToObserve)>0:
-            topic = "joint_states"
-            self._jointStateSubscriber = rospy.Subscriber(topic, sensor_msgs.msg.JointState, self._jointStateCallback, queue_size=1)
-            ggLog.info(f"Subscribed to {topic}")
-
-        if len(self._linksToObserve)>0:
-            topic = "link_states"
-            self._linkStatesSubscriber = rospy.Subscriber(topic, LinkStates, self._linkStatesCallback, queue_size=1)
-            ggLog.info(f"Subscribed to {topic}")
-
-
-
-
-        self._listenersStarted = True
-
-
+        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
+        self._robot_interface = xbot.RobotInterface(cfg)
+        ggLog.info(get_system_recap_string(self._robot_interface))
+        setup_control()
+        self._robot_enabled_joint_names = self._robot_interface.getEnabledJointNames() # this is different from robot.model().getEnabledJointNames()
+        self._joints_num = len(self._robot_enabled_joint_names)
+        self._joint_name_to_id = {jname : self._robot_enabled_joint_names.index(jname) for jname in self._robot_enabled_joint_names}
+        self._joint_id_to_name = {jid : jname for jname, jid in self._joint_name_to_id.items()}
+        if is_simulated():
+            start_control()
 
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
         if not self._listenersStarted:
             raise RuntimeError("called getJointsState without having called startController. The proper way to initialize the controller is to first build the controller, then call setJointsToObserve, and then call startController")
         
 
-        gottenJoints = {}
-        missingJoints = requestedJoints
-        for j in requestedJoints:
-            if j not in self._jointsToObserve:
-                raise RuntimeError("Requested joint that was not requested in setJointsToObserve")
+        self._robot_interface.sense(update_model=False)
+
+        #TODO: get the delay time somehow
+        # obsDelay = float("+inf")
+        # while obsDelay > self._maxObsAge:
+        #     self.freerun(0.001)
+        #     self._robot_interface.sense(update_model=False)
+        #     obsDelay = self._robot_interface.getTime() - self._robot_interface.getTimestampRx()            
+        # self._jointStateMsgAgeAvg.addValue(obsDelay)
+
+        jpos = self._robot_interface.getJointPosition()
+        jvel = self._robot_interface.getJointVelocity()
+        jeff = self._robot_interface.getJointEffort()
 
 
-
-            # ggLog.info("RosAdapter.getJointsState() called")
-
-            call_time = rospy.get_time()
-
-            lastErrTime = call_time
-            while True:
-                with self._jointStatesMutex:
-                    jointStatesMsg = self._lastJointStatesReceived
-                    if jointStatesMsg is not None:
-                        msgAge = call_time - jointStatesMsg.header.stamp.to_sec()
-                        # print(f"msgAge = {msgAge}")
-                        if msgAge < self._maxObsAge or self._maxObsAge == float("+inf"):
-                            for j in requestedJoints:
-                                modelName = j[0]
-                                jointName = j[1]                    
-                                try:
-                                    jointIndex = jointStatesMsg.name.index(jointName)
-                                except ValueError:
-                                    jointIndex = None
-                                if jointIndex is not None:
-                                    gottenJoints[j] = JointState([jointStatesMsg.position[jointIndex]], [jointStatesMsg.velocity[jointIndex]], [jointStatesMsg.effort[jointIndex]])
-                    else:
-                        msgAge = float("+inf")
-                missingJoints = []
-                for j in requestedJoints:
-                    if j not in gottenJoints:
-                        missingJoints.append(j)
-                if len(missingJoints) == 0 or not self._blocking_observation:
-                    break
-                self.freerun(0.01)
-
-                if rospy.get_time() - lastErrTime > 10:
-                    ggLog.warn(f"Waiting for joints since {rospy.get_time()-call_time}s. Still missing: {missingJoints}")
-                    lr_gym.utils.beep.beep()                
-                    lastErrTime = rospy.get_time()
+        ret = {}
+        for full_joint_name in requestedJoints:
+            model, jname = full_joint_name
+            if model != self._model_name:
+                raise RuntimeError(f"Requested joint for model different from the monitored one (asked '{model, jname}', but have '{self._model_name}')")
+            jid = self._joint_name_to_id[jname]
+            ret[full_joint_name] = JointState(position=th.as_tensor(jpos[jid]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
+                                                rate=th.as_tensor(jvel[jid]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
+                                                effort=th.as_tensor(jeff[jid]).to(device=self._torch_device, non_blocking=True, dtype=th.float32))
+        if self._torch_device.type == "cuda":
+            # sync non_blocking cuda transfers
+            th.cuda.synchronize(self._torch_device)
+        return ret
 
 
-            self._jointStateMsgAgeAvg.addValue(msgAge)
-            waitTime = rospy.get_time() - call_time
-            self._jointMsgWaitAvg.addValue(waitTime)
+    def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
+        if not self._listenersStarted:
+            raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call setLinksToObserve, and then call startController")
 
+        #print("self._linksToObserve = "+str(self._linksToObserve))
+        for l in requestedLinks:
+            if l not in self._linksToObserve:
+                raise RuntimeError(f"Requested link '{l}' that was not requested in setLinksToObserve (only observing {self._linksToObserve})")
 
+        self._robot_interface.sense(update_model=True)
+        #TODO: get the delay time somehow
+        # obsDelay = float("+inf")
+        # while obsDelay > self._maxObsAge:
+        #     self.freerun(0.001)
+        #     self._robot_interface.sense(update_model=True)
+        #     obsDelay = self._robot_interface.getTime() - self._robot_interface.getTimestampRx()            
+        # self._jointStateMsgAgeAvg.addValue(obsDelay)
 
-        if len(missingJoints)>0:
-            err = f"Failed to get state for joints {missingJoints}, requested {requestedJoints} "
-            #rospy.logerr(err)
-            raise RequestFailError(message=err, partialResult=gottenJoints)
+        model = self._robot_interface.model()
 
-        return gottenJoints
+        ret = {}
+        for full_link_name in requestedLinks:
+            mname, lname = full_link_name
+            if mname != self._model_name:
+                raise RuntimeError(f"Requested link for model different from the monitored one (asked '{mname, lname}', but have '{self._model_name}')")
+
+            lpose = model.getPose(lname, self._reference_frame)
+            ltwist = model.getRelativeVelocityTwist(lname, self._reference_frame)
+
+            ls = LinkState(position_xyz=th.as_tensor(lpose.translation).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
+                           orientation_xyzw=th.as_tensor(lpose.quaternion).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
+                           pos_velocity_xyz=th.as_tensor(ltwist[:3]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
+                           ang_velocity_xyz=th.as_tensor(ltwist[3:]).to(device=self._torch_device, non_blocking=True, dtype=th.float32))
+            ret[full_link_name] = ls
+            
+        if self._torch_device.type == "cuda":
+            # sync non_blocking cuda transfers
+            th.cuda.synchronize(self._torch_device)
+
+        return ret
+
+    @override
+    def setJointsImpedanceCommand(self, joint_impedances_pvesd : List[Tuple[Tuple[str,str],Tuple[float,float,float,float,float]]]) -> None:
+        # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
+        for full_jname, jcmd in joint_impedances_pvesd:
+            model_name, jname = full_jname
+            if model_name != self._model_name:
+                raise RuntimeError(f"Commanded joint impedance for model different from the controlled one (asked '{model_name, jname}', but have '{self._model_name}')")
+            self._commanded_joint_impedances_by_name[full_jname] = jcmd
+
+    def _apply_commanded_joint_impedances(self):
+        self.apply_joint_impedances(list(self._commanded_joint_impedances_by_name.items()))
+
+    @override
+    def apply_joint_impedances(self, joint_impedances_pvesd : List[Tuple[Tuple[str,str],Tuple[float,float,float,float,float]]]):
+
+        commanded_joint_impedances_by_jid = {}
+        for full_jname, jcmd in joint_impedances_pvesd:
+            model_name, jname = full_jname
+            if model_name != self._model_name:
+                raise RuntimeError(f"Commanded joint impedance for model different from the controleld one (asked '{model_name, jname}', but have '{self._model_name}')")
+            jid = self._joint_name_to_id[jname]
+            commanded_joint_impedances_by_jid[jid] = jcmd
+        
+        prefs, vrefs, erefs, pgains, vgains = (np.zeros(shape=(self._joints_num,), dtype=np.float64) 
+                                               for _ in range(5))
+
+        curr_pos = self._robot_interface.getJointPosition()
+        used_fallback = False
+        for jid in range(self._joints_num):
+            cmd = commanded_joint_impedances_by_jid.get(jid,None)
+            if cmd is None and self._allow_fallback:
+                used_fallback = True
+                ggLog.warn(f"Missing command for joint {self._joint_id_to_name[jid]} ({jid}), using fallback.")
+                # keeps current position
+                cmd = (curr_pos[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
+            prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
+        if used_fallback:
+            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
+            ggLog.warn(f"I.e. joint names:\n {[ji[0] for ji in joint_impedances_pvesd]}")
+
+        self._robot_interface.setStiffness(pgains)
+        self._robot_interface.setDamping(vgains)
+        self._robot_interface.setPositionReference(prefs)
+        self._robot_interface.setVelocityReference(vrefs)
+        self._robot_interface.setEffortReference(erefs)
+        self._robot_interface.move()
+        # ggLog.info(f"Sent robot_interface command")
+
+    def clear_commands(self):
+        self._commanded_joint_impedances_by_name = {}
+
+    def step(self) -> float:
+        # traceback.print_stack()
+        # ggLog.info(f"applying impedances")
+        self._apply_commanded_joint_impedances()
+        # ggLog.info(f"stepping")
+        step_duration = super().step()
+        # ggLog.info(f"clearing")
+        self.clear_commands()
+        return step_duration

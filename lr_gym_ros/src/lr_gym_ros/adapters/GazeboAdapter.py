@@ -8,14 +8,14 @@ import lr_gym.utils.dbg.ggLog as ggLog
 import rospy
 import sensor_msgs
 import sensor_msgs.msg
-from lr_gym.adapters.JointEffortEnvAdapter import JointEffortEnvAdapter
+from lr_gym.adapters.BaseJointEffortAdapter import BaseJointEffortAdapter
 from lr_gym.utils.utils import JointState, LinkState
 from lr_gym_ros.adapters.GazeboAdapterNoPlugin import GazeboAdapterNoPlugin
 import numpy as np
 import lr_gym.utils.utils
 from overrides import override
 
-class GazeboAdapter(GazeboAdapterNoPlugin, JointEffortEnvAdapter):
+class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
     """This class allows to control the execution of a Gazebo simulation.
 
     It makes use of the lr_gym_ros_env gazebo plugin to perform simulation stepping and rendering.

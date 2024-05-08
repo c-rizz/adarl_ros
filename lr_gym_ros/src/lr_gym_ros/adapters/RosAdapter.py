@@ -15,7 +15,7 @@ from lr_gym.adapters.BaseAdapter import BaseAdapter
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 from lr_gym_ros_utils.msg import LinkStates
 import numpy as np
-
+import lr_gym.utils.sigint_handler
 
 class RosAdapter(BaseAdapter):
     """This class allows to control the execution of a ROS-based environment.
@@ -24,7 +24,10 @@ class RosAdapter(BaseAdapter):
 
     """
 
-    def __init__(   self, stepLength_sec : float = 0.001, forced_ros_master_uri : Union[str, None] = None, maxObsDelay = float("+inf"), blocking_observation = False):
+    def __init__(   self,   stepLength_sec : float = 0.001,
+                            forced_ros_master_uri : Union[str, None] = None,
+                            maxObsDelay = float("+inf"),
+                            blocking_observation = False):
         """Initialize the Simulator controller.
 
         Raises
@@ -60,6 +63,10 @@ class RosAdapter(BaseAdapter):
         self._mmRosLauncher : lr_gym_ros_utils.ros_launch_utils.MultiMasterRosLauncher = None
 
 
+    def freerun(self, duration_sec : float):
+        rospy.sleep(duration_sec)
+
+
     def step(self) -> float:
         """Wait for the step time to pass."""
 
@@ -72,9 +79,12 @@ class RosAdapter(BaseAdapter):
             self.freerun(sleepDuration)
         else:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
-        self._lastStepEnd = self.getEnvTimeFromStartup()
+        t = self.getEnvTimeFromStartup()
+        step_duration = t - self._lastStepEnd
+        self._lastStepEnd = t
         #rospy.loginfo("Slept")
-        return self._stepLength_sec if sleepDuration > 0 else self._stepLength_sec-sleepDuration
+        return step_duration
+    
 
     def _imagesCallback(self,msg,args):
         self = args[0]
@@ -137,7 +147,7 @@ class RosAdapter(BaseAdapter):
                 time.sleep(1)
 
         rospy.init_node('ros_env_controller', anonymous=True)
-        lr_gym.utils.utils.setupSigintHandler()
+        lr_gym.utils.sigint_handler.setupSigintHandler()
 
         self._simTimeStart = rospy.get_time() #Will be overwritten by resetWorld
         self._lastStepEnd = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
@@ -382,14 +392,12 @@ class RosAdapter(BaseAdapter):
         return t
 
 
-    def freerun(self, duration_sec : float):
-        rospy.sleep(duration_sec)
 
     def build_scenario(self, launch_file_pkg_and_path : Union[str,Tuple[str,str]],
                              launch_file_args : Dict[str,str],
                              base_port = 11350,
                              ros_master_ip = "127.0.0.1"):
-        if type(launch_file_pkg_and_path) == tuple:
+        if isinstance(launch_file_pkg_and_path, (tuple, list)):
             launch_file = rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+"/"+launch_file_pkg_and_path[1]
         else:
             launch_file = launch_file_pkg_and_path

@@ -6,12 +6,12 @@ from lr_gym_ros.adapters.RosAdapter import RosAdapter
 from lr_gym_ros.rosControlUtils import ControllerManagementHelper
 from lr_gym_ros.rosControlUtils import TrajectoryControllerHelper
 
-from lr_gym.adapters.JointEffortEnvAdapter import JointEffortEnvAdapter
+from lr_gym.adapters.BaseJointEffortAdapter import BaseJointEffortAdapter
 
 import rospy
 import std_msgs.msg
 
-class EffortRosControlAdapter(RosAdapter, JointEffortEnvAdapter):
+class EffortRosControlAdapter(RosAdapter, BaseJointEffortAdapter):
     """This class allows to control the execution of a ROS-based environment.
 
     Controls robot joints using ros_control's effort controllers and trajectory controllers.

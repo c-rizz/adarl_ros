@@ -114,20 +114,25 @@ class MultiMasterRosLauncher:
             else:
                 ggLog.info("Roslaunch exited.")
             return
-        thread = threading.Thread(target=run_in_thread, daemon=True) #Daemon=True makes it so that the thread is terminated (ungracefully) if the main thread crashes
+        thread = threading.Thread(target=run_in_thread, daemon=True, name=f"MultiMasterRosLauncher_{self._rosMasterPort}_{time.monotonic_ns()}") #Daemon=True makes it so that the thread is terminated (ungracefully) if the main thread crashes
         thread.start()
         # time.sleep(10) #TODO: Ugly, need a better way to ensure the roslaunch has launched everyting
 
 
-        atexit.register(self.stop)
+        atexit.register(self._stop_atexit)
     # def launchAsync(self) -> mp.Process:
     #     p = mp.Process(target=self.launch)
     #     p.start()
     #     self._process = p
     #     return self._process
 
+    def _stop_atexit(self):
+        ggLog.info(f"MultiMasterRosLauncher {self._rosMasterPort}: atexit triggered")
+        self.stop()
+
     def stop(self):
         """Stop a roscore started with launchAsync."""
+        ggLog.info(f"MultiMasterRosLauncher {self._rosMasterPort}: stopping")
         self._popen_obj.send_signal(signal.SIGINT)
         ggLog.info("Waiting for ros subprocess to finish")
         try:
