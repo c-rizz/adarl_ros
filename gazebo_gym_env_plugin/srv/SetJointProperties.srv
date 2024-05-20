@@ -1,0 +1,10 @@
+
+# Joint properties to set
+gazebo_gym_env_plugin/JointProperties[] joint_properties
+
+
+---
+
+bool success
+string error_message
+gazebo_gym_env_plugin/JointProperties[] resulting_joint_properties

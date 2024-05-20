@@ -73,16 +73,16 @@ class RosAdapter(BaseAdapter):
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not step.")
         #TODO: it may make sense to keep track of the time spend in the rest of the processing
-        sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._lastStepEnd)
+        sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._last_step_end_env_time)
+        # ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
         if sleepDuration > 0:
             #rospy.loginfo("Sleeping "+str(sleepDuration))
             self.freerun(sleepDuration)
         else:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
         t = self.getEnvTimeFromStartup()
-        step_duration = t - self._lastStepEnd
-        self._lastStepEnd = t
-        #rospy.loginfo("Slept")
+        step_duration = t - self._last_step_end_env_time
+        self._last_step_end_env_time = t
         return step_duration
     
 
@@ -112,10 +112,10 @@ class RosAdapter(BaseAdapter):
         self._linkStatesMutex.release()
 
 
-    def startController(self):
+    def startup(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
-        The topics to listen to must be specified using the setCamerasToObserve, setJointsToObserve, and setLinksToObserve methods
+        The topics to listen to must be specified using the set_monitored_cameras, set_monitored_joints, and set_monitored_links methods
 
         Returns
         -------
@@ -145,12 +145,13 @@ class RosAdapter(BaseAdapter):
             except ConnectionRefusedError:
                 ggLog.error("No connection to ROS parameter server. Will retry")
                 time.sleep(1)
+        ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
 
         rospy.init_node('ros_env_controller', anonymous=True)
         lr_gym.utils.sigint_handler.setupSigintHandler()
 
-        self._simTimeStart = rospy.get_time() #Will be overwritten by resetWorld
-        self._lastStepEnd = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
+        self._startup_env_time = rospy.get_time() #Will be overwritten by resetWorld
+        self._last_step_end_env_time = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
 
         self._imageSubscribers = []
         for cam_topic in self._camerasToObserve:
@@ -189,11 +190,11 @@ class RosAdapter(BaseAdapter):
 
         """
         if not self._listenersStarted:
-            raise RuntimeError("called getRenderings without having called startController. The proper way to initialize the controller is to first build the controller, then call setCamerasToObserve, and then call startController")
+            raise RuntimeError("called getRenderings without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_cameras, and then call startController")
 
         for c in requestedCameras:
             if c not in self._camerasToObserve:
-                raise RuntimeError(f"Requested image from a camera {c}, which was not requested in setCamerasToObserve")
+                raise RuntimeError(f"Requested image from a camera {c}, which was not requested in set_monitored_cameras")
 
         retDict = {}
         call_time = rospy.get_time()
@@ -239,14 +240,14 @@ class RosAdapter(BaseAdapter):
 
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
         if not self._listenersStarted:
-            raise RuntimeError("called getJointsState without having called startController. The proper way to initialize the controller is to first build the controller, then call setJointsToObserve, and then call startController")
+            raise RuntimeError("called getJointsState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_joints, and then call startController")
         
 
         gottenJoints = {}
         missingJoints = requestedJoints
         for j in requestedJoints:
             if j not in self._jointsToObserve:
-                raise RuntimeError("Requested joint that was not requested in setJointsToObserve")
+                raise RuntimeError("Requested joint that was not requested in set_monitored_joints")
 
 
 
@@ -302,12 +303,12 @@ class RosAdapter(BaseAdapter):
 
     def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
         if not self._listenersStarted:
-            raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call setLinksToObserve, and then call startController")
+            raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_links, and then call startController")
 
         #print("self._linksToObserve = "+str(self._linksToObserve))
         for l in requestedLinks:
             if l not in self._linksToObserve:
-                raise RuntimeError("Requested link '"+str(l)+"' that was not requested in setLinksToObserve")
+                raise RuntimeError("Requested link '"+str(l)+"' that was not requested in set_monitored_links")
 
         call_time = rospy.get_time()
         gottenLinks = {}
@@ -381,14 +382,14 @@ class RosAdapter(BaseAdapter):
         # ggLog.info("Average link_state wait ="+str(self._linkMsgWaitAvg.getAverage()))
         # ggLog.info("Average joint_state wait ="+str(self._jointMsgWaitAvg.getAverage()))
         # ggLog.info("Average camera image wait ="+str(self._cameraMsgWaitAvg.getAverage()))
-        self._lastStepEnd = self.getEnvTimeFromStartup()
+        self._last_step_end_env_time = self.getEnvTimeFromStartup()
 
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not reset.")
 
 
     def getEnvTimeFromStartup(self) -> float:
-        t = rospy.get_time() - self._simTimeStart
+        t = rospy.get_time() - self._startup_env_time
         return t
 
 
@@ -411,3 +412,4 @@ class RosAdapter(BaseAdapter):
     def destroy_scenario(self):
         if self._mmRosLauncher is not None:
             self._mmRosLauncher.stop()
+        rospy.signal_shutdown(reason="RosAdapter.destroy()")

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
+from __future__ import annotations
 import time
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Mapping
 
 import gazebo_gym_env_plugin.msg
 import gazebo_gym_env_plugin.srv
@@ -13,9 +15,10 @@ from lr_gym.utils.utils import JointState, LinkState
 from lr_gym_ros.adapters.GazeboAdapterNoPlugin import GazeboAdapterNoPlugin
 import numpy as np
 import lr_gym.utils.utils
-from overrides import override
+from typing_extensions import override
+from lr_gym.adapters.BaseAdapter import JointName, LinkName
 
-class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
+class GazeboAdapter(GazeboAdapterNoPlugin):
     """This class allows to control the execution of a Gazebo simulation.
 
     It makes use of the lr_gym_ros_env gazebo plugin to perform simulation stepping and rendering.
@@ -59,13 +62,15 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
         self._usePersistentConnections = usePersistentConnections
         self._simulationState = GazeboAdapter._SimState()
         self._jointEffortsToRequest = []
+        self._totalCountedSimDuration_nano = 0
 
     def _makeRosConnections(self):
         super()._makeRosConnections()
 
         serviceNames = {"step" : "/gazebo/gym_env_interface/step",
                         "render" : "/gazebo/gym_env_interface/render",
-                        "get_info" : "/gazebo/gym_env_interface/get_info"}
+                        "get_info" : "/gazebo/gym_env_interface/get_info",
+                        "setJointProperties" : "/gazebo/gym_env_interface/set_joint_properties"}
 
         timeout_secs = 30.0
         for serviceName in serviceNames.values():
@@ -83,6 +88,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
         self._stepGazeboService   = rospy.ServiceProxy(serviceNames["step"], gazebo_gym_env_plugin.srv.StepSimulation, persistent=self._usePersistentConnections)
         self._renderGazeboService   = rospy.ServiceProxy(serviceNames["render"], gazebo_gym_env_plugin.srv.RenderCameras, persistent=self._usePersistentConnections)
         self._infoGazeboService   = rospy.ServiceProxy(serviceNames["get_info"], gazebo_gym_env_plugin.srv.GetInfo, persistent=self._usePersistentConnections)
+        self._setJointPropertiesService = rospy.ServiceProxy(serviceNames["setJointProperties"], gazebo_gym_env_plugin.srv.SetJointProperties, persistent=self._usePersistentConnections)
 
 
     def isPaused(self):
@@ -91,18 +97,10 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
         # ggLog.info(f"Called _infoGazeboService")
         return ret
 
-    def step(self) -> float:
-        """Run the simulation for the step time and optionally get some information.
-
-        Parameters
-        ----------
-        performRendering : bool
-            Set to true to get camera renderings
-
-        """
-
+    def _step_sim(self, duration_nano : int):
+        # ggLog.info(f"freerun({duration_sec})")
         request = gazebo_gym_env_plugin.srv.StepSimulationRequest()
-        request.step_duration_secs = self._stepLength_sec
+        request.step_duration_nanosecs = duration_nano
         request.request_time = time.time()
         #ggLog.info("self._camerasToObserve = "+str(self._camerasToObserve))
         if len(self._camerasToObserve)>0:
@@ -135,48 +133,57 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
                 # ggLog.info(f"Called _stepGazeboService")
                 break
             except rospy.service.ServiceException as e:
-                if servicecalltries > 60:
+                if servicecalltries > 20:
                     ggLog.error("Gazebo step service failed too many times.")
                     raise e
                 else:
-                    ggLog.error("Gazebo step service call failed with exception:\n"+str(e)+"\n retrying")
+                    ggLog.error(f"Gazebo step service call failed {servicecalltries} times. Exception:\n"+str(e)+"\n retrying")
                     time.sleep(1)
             servicecalltries += 1
-        self._stepsTaken +=1
+        self._episode_steps_taken +=1
+        step_duration_sec = request.step_duration_nanosecs / 1e9
+        self._episodeCountedSimDuration += step_duration_sec
+        self._totalCountedSimDuration += step_duration_sec
+        self._totalCountedSimDuration_nano += request.step_duration_nanosecs
+        self._simulationState.stepNumber = self._episode_steps_taken
 
         #print("Step response = "+str(response))
-
-        self._episodeIntendedSimDuration += self._stepLength_sec
-        
         #rospy.loginfo("Transfer time of stepping response = "+str(time.time()-response.response_time))
 
-        self._simulationState.stepNumber = self._stepsTaken
 
         if len(self._camerasToObserve)>0:
             if not response.render_result.success:
-                rospy.logerr("Error getting renderings: "+response.render_result.error_message)
+                ggLog.warn("Error getting renderings: "+response.render_result.error_message)
             for i in range(len(response.render_result.camera_names)):
                 #ggLog.info("got image for camera "+response.render_result.camera_names[i])
                 self._simulationState.cameraRenders[response.render_result.camera_names[i]] = (response.render_result.images[i],response.render_result.camera_infos[i])
 
         if len(self._jointsToObserve)>0:
             if not response.joints_info.success:
-                rospy.logerr("Error getting joint information: "+response.joints_info.error_message)
+                ggLog.warn("Error getting joint information: "+response.joints_info.error_message)
             for ji in response.joints_info.joints_info:
+                ggLog.info(f"Got joint info {(ji.joint_id.model_name,ji.joint_id.joint_name)}.position = {ji.position}")
                 self._simulationState.jointsState[(ji.joint_id.model_name,ji.joint_id.joint_name)] = ji
 
         if len(self._linksToObserve)>0:
             if not response.links_info.success:
-                rospy.logerr("Error getting link information: "+response.joints_info.error_message)
+                ggLog.warn("Error getting link information: "+response.joints_info.error_message)
             for li in response.links_info.links_info:
                 self._simulationState.linksState[(li.link_id.model_name,li.link_id.link_name)] = li
 
         #print("Step done, joint state = "+str(self._simulationState.jointsState))
         if not response.success:
-            rospy.logerr("Simulation stepping failed")
+            ggLog.error("Simulation stepping failed")
+        # ggLog.info(f"Stepped of {request.step_duration_nanosecs / 1e9:.10f} (requested {duration_sec:.10f})s")
 
-        return self._stepLength_sec
-
+    @override
+    def freerun(self, duration_sec : float):
+        self._step_sim(duration_nano=int(duration_sec * 1e9))
+    
+    @override
+    def getEnvTimeFromStartup(self) -> float:
+        return self._totalCountedSimDuration_nano /1e9
+    
     def _performRender(self, requestedCameras : List[str]):
         # ggLog.info("Rendering cameras "+str(requestedCameras))
         req = gazebo_gym_env_plugin.srv.RenderCamerasRequest()
@@ -187,7 +194,6 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
         res = self._renderGazeboService.call(req)
         # ggLog.info(f"Calling _renderGazeboService")
         #t1 = time.time()
-        #self._totalRenderTime += t1-t0
         #rospy.loginfo("Transfer time of rendering response = "+str(time.time()-res.response_time))
 
         if not res.render_result.success:
@@ -201,14 +207,14 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
         return renders
 
     @override
-    def getRenderings(self, requestedCameras : List[str]) -> Dict[str, Tuple[np.ndarray, float]]:
+    def getRenderings(self, requestedCameras : List[str]) -> dict[str, tuple[np.ndarray, float]]:
         # ggLog.info("GazebController.getRenderings")
         for name in requestedCameras:
             if name not in self._camerasToObserve:
-                # print(f"Requested rendering camera {name} which was not set with setCamerasToObserve (cameras are {self._camerasToObserve})")
-                raise RuntimeError(f"Requested rendering camera {name} which was not set with setCamerasToObserve (cameras are {self._camerasToObserve})")
+                # print(f"Requested rendering camera {name} which was not set with set_monitored_cameras (cameras are {self._camerasToObserve})")
+                raise RuntimeError(f"Requested rendering camera {name} which was not set with set_monitored_cameras (cameras are {self._camerasToObserve})")
 
-        if self._simulationState.stepNumber!=self._stepsTaken: #If no step has ever been done
+        if self._simulationState.stepNumber!=self._episode_steps_taken: #If no step has ever been done
             # ggLog.info("Manually rendering images for "+str(requestedCameras))
             cameraRenders = self._performRender(requestedCameras)
         else:
@@ -221,23 +227,25 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
             ret[name] = (lr_gym.utils.utils.ros1_image_to_numpy(rosimg), rosimg.header.stamp.to_sec())
         return ret
 
+    @override
+    def getJointsState(self, requestedJoints : List[tuple[str,str]]) -> dict[tuple[str,str],JointState]:
 
-    def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
-
-        if self._simulationState.stepNumber!=self._stepsTaken: #If no step has ever been done
+        if self._simulationState.stepNumber!=self._episode_steps_taken: #If no step has ever been done
             return super().getJointsState(requestedJoints)
 
         ret = {}
         for rj in requestedJoints:
             jointInfo = self._simulationState.jointsState[rj]
-            jointState = JointState(list(jointInfo.position),list(jointInfo.rate), None) #TODO: get effort info
+            jointState = JointState(list(jointInfo.position),
+                                    list(jointInfo.rate),
+                                    list(jointInfo.effort))
             ret[rj] = jointState
         return ret
 
+    @override
+    def getLinksState(self, requestedLinks : List[tuple[str,str]]) -> dict[tuple[str,str],LinkState]:
 
-    def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
-
-        if self._simulationState.stepNumber!=self._stepsTaken: #If no step has ever been done
+        if self._simulationState.stepNumber!=self._episode_steps_taken: #If no step has ever been done
             return super().getLinksState(requestedLinks)
 
         ret = {}
@@ -251,7 +259,8 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
             ret[rl] = linkState
         return ret
 
-    def setJointsEffortCommand(self, jointTorques : List[Tuple[str,str,float]]) -> None:
+    @override
+    def setJointsEffortCommand(self, jointTorques : List[tuple[str,str,float]]) -> None:
         self._jointEffortsToRequest = []
         for jt in jointTorques:
             jer = gazebo_gym_env_plugin.msg.JointEffortRequest()
@@ -260,3 +269,50 @@ class GazeboAdapter(GazeboAdapterNoPlugin, BaseJointEffortAdapter):
             jer.effort = jt[2]
             self._jointEffortsToRequest.append(jer)
 
+
+
+    def setJointsStateDirect(self, jointStates : dict[tuple[str,str],JointState]):
+        r = super().setJointsStateDirect(jointStates=jointStates)
+        self._step_sim(0) # update simulation state
+        return r
+    
+    @override
+    def setLinksStateDirect(self, linksStates : dict[tuple[str,str],LinkState]):
+        r = super().setLinksStateDirect(linksStates=linksStates)
+        self._step_sim(0) # update simulation state
+        return r
+    
+    def set_sim_joint_limits(self, joint_limits_minmax : Mapping[JointName, tuple[float | None,float  | None]]):
+        for (model_name, joint_name), (min_pos, max_pos) in joint_limits_minmax.items():
+            msg = gazebo_gym_env_plugin.srv.SetJointPropertiesRequest()
+            jp = gazebo_gym_env_plugin.msg.JointProperties()
+            jp.joint_id.model_name = model_name
+            jp.joint_id.joint_name = joint_name
+            if max_pos is not None:
+                jp.position_limit_high = [max_pos]
+            if min_pos is not None:
+                jp.position_limit_low = [min_pos]
+            msg.joint_properties.append(jp)
+        res = self._setJointPropertiesService.call(msg)
+        if not res.success:
+            raise RuntimeError(f"Failed to set joint limits: {res}")
+        
+    def get_sim_joint_limits(self, joint_names : list[JointName]) -> dict[JointName, tuple[float,float]]:
+        for (model_name, joint_name) in joint_names:
+            msg = gazebo_gym_env_plugin.srv.SetJointPropertiesRequest()
+            jp = gazebo_gym_env_plugin.msg.JointProperties()
+            jp.joint_id.model_name = model_name
+            jp.joint_id.joint_name = joint_name
+            jp.position_limit_high = []
+            jp.position_limit_low = []
+            msg.joint_properties.append(jp)
+        res = self._setJointPropertiesService.call(msg)
+        if not res.success:
+            raise RuntimeError(f"Failed to get joint limits: {res}")
+        
+        for jp in res.resulting_joint_properties:
+            if jp.degrees_of_freedom != 1:
+                raise RuntimeError(f"Only 1-dof joints are supported, {jp.joint_id} has {jp.degrees_of_freedom} DOF")
+
+        return {(jp.joint_id.model_name, jp.joint_id.joint_name): (jp.position_limit_low[0], jp.position_limit_high[0])
+                 for jp in res.resulting_joint_properties}

@@ -65,6 +65,7 @@ add_message_files(
  LinksInfoResponse.msg
 
  JointEffortRequest.msg
+ JointProperties.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -73,6 +74,7 @@ add_service_files(
   StepSimulation.srv
   RenderCameras.srv
   GetInfo.srv
+  SetJointProperties.srv
 )
 
 # add_action_files(

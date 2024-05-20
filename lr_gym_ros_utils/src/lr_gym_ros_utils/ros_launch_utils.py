@@ -73,9 +73,10 @@ class MultiMasterRosLauncher:
     def __init__(self, launchFile : str, cli_args : List[str] = [], basePort : int = 11350, ros_master_ip : str = "127.0.0.1"):
         self._launchFile = launchFile
         self._cli_args  = cli_args
-        self._mutex = None
+        self._mutex : SystemMutex
         self._baseRosPort = basePort
         self._ros_master_ip = ros_master_ip
+        self._popen_obj : subprocess.Popen
         self.setPorts()
 
     def launchAsync(self):
@@ -86,7 +87,7 @@ class MultiMasterRosLauncher:
         if len(previd)>0:
             ggLog.setId(f"{previd}-{self._rosMasterPort}")
         else:
-            ggLog.setId(self._rosMasterPort)
+            ggLog.setId(f"{self._rosMasterPort}")
         
         delay = self._rosMasterPort-self._baseRosPort #Very ugly way to avoid potential race conditions
         for i in range(delay):
@@ -132,23 +133,29 @@ class MultiMasterRosLauncher:
 
     def stop(self):
         """Stop a roscore started with launchAsync."""
-        ggLog.info(f"MultiMasterRosLauncher {self._rosMasterPort}: stopping")
-        self._popen_obj.send_signal(signal.SIGINT)
-        ggLog.info("Waiting for ros subprocess to finish")
-        try:
-            self._popen_obj.wait(10)
-        except subprocess.TimeoutExpired:
-            if self._popen_obj.poll() is None:
-                ggLog.warn("Terminating subprocess forcefully (SIGTERM)")
-                self._popen_obj.terminate()
-                try:
-                    self._popen_obj.wait(10)
-                except subprocess.TimeoutExpired:
-                    if self._popen_obj.poll():
-                        ggLog.warn("Killing subprocess (SIGKILL)")
-                        self._popen_obj.kill()
-        self._mutex.release()
-        ggLog.info("Ros subprocess finished")
+        r = self._popen_obj.poll()
+        if r is None:
+            ggLog.info(f"MultiMasterRosLauncher {self._rosMasterPort} stopping")
+            self._popen_obj.send_signal(signal.SIGINT)
+            ggLog.info("Waiting for ros subprocess to finish")
+            try:
+                self._popen_obj.wait(10)
+            except subprocess.TimeoutExpired:
+                if self._popen_obj.poll() is None:
+                    ggLog.warn("Terminating ROS subprocess forcefully (SIGTERM)")
+                    self._popen_obj.terminate()
+                    try:
+                        self._popen_obj.wait(10)
+                    except subprocess.TimeoutExpired:
+                        if self._popen_obj.poll():
+                            ggLog.warn("Killing ROS subprocess (SIGKILL)")
+                            self._popen_obj.kill()
+            ggLog.info("ROS subprocess has finished.")
+        else:
+            ggLog.info("ROS subprocess was already finished.")
+        self._mutex.release() # System mutex for ROS port
+        ggLog.info(f"MultiMasterRosLauncher {self._rosMasterPort} stopped")
+
 
     def getRosMasterUri(self):
         return self._rosMasterUri

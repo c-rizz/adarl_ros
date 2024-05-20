@@ -28,17 +28,17 @@ class PandaMoveitRosAdapter(MoveitRosAdapter):
 
     
 
-    def startController(self):
+    def startup(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
-        The topics to listen to must be specified using the setCamerasToObserve, setJointsToObserve, and setLinksToObserve methods
+        The topics to listen to must be specified using the set_monitored_cameras, set_monitored_joints, and set_monitored_links methods
 
 
 
         """
         self._action_fail_count = 0
         self._default_max_tries = 10
-        super().startController()
+        super().startup()
         self._frankaStateMutex = Lock() #To synchronize _jointStateCallback with getJointsState
         self._errorRecoveryActionClient = self._connectRosAction('/franka_control/error_recovery', franka_msgs.msg.ErrorRecoveryAction)
         self._frankaStateSubscriber = rospy.Subscriber('/franka_state_controller/franka_states', franka_msgs.msg.FrankaState, self._frankaStateCallback, queue_size=1)
@@ -112,7 +112,7 @@ class PandaMoveitRosAdapter(MoveitRosAdapter):
             return super().resetWorld()
         except MoveFailError as e:
             ggLog.warn(f"resetWorld failed. Will try to recover. exception = {e}")
-        self._step_start_time = self.getEnvSimTimeFromStart()
+        self._step_start_time = self.getEnvTimeFromStartup()
 
     @override
     def step(self) -> float:
@@ -124,7 +124,7 @@ class PandaMoveitRosAdapter(MoveitRosAdapter):
             return super().step()
         except MoveFailError as e:
             ggLog.warn(f"Step failed. Will try to recover. exception = {e}")
-        t = self.getEnvSimTimeFromStart()
+        t = self.getEnvTimeFromStartup()
         step_duration = t - self._step_start_time
         self._step_start_time = t
         return step_duration

@@ -36,7 +36,7 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
         """Initialize the environment controller.
 
         """
-        self._gazeboController = GazeboAdapter() #Could do with multiple inheritance but this is more readable
+        self._gazeboAdapter = GazeboAdapter() #Could do with multiple inheritance but this is more readable
         super().__init__(   jointsOrder = jointsOrder,
                             endEffectorLink = endEffectorLink,
                             referenceFrame = referenceFrame,
@@ -51,17 +51,13 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
 
 
     @override
-    def startController(self):
+    def startup(self):
         """Start the ROS listeners for receiving images, link states and joint states.
-
-        The topics to listen to must be specified using the setCamerasToObserve, setJointsToObserve, and setLinksToObserve methods
-
-
-
+        The topics to listen to must be specified using the set_monitored_cameras, set_monitored_joints, and set_monitored_links methods
         """
 
-        super().startController()
-        self._gazeboController._makeRosConnections()
+        super().startup()
+        self._gazeboAdapter._makeRosConnections()
 
 
     # @override
@@ -70,7 +66,7 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
                             pose : Pose,
                             model_kwargs : Dict[Any,Any] = {},
                             model_format = None) -> str:
-        return self._gazeboController.spawn_model(model_file = model_file,
+        return self._gazeboAdapter.spawn_model(model_file = model_file,
                                             pose=pose,
                                             model_name=model_name,
                                             model_kwargs=model_kwargs,
@@ -78,11 +74,11 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
     @override
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""
-        self._gazeboController.delete_model(model_name = model_name)
+        self._gazeboAdapter.delete_model(model_name = model_name)
     
     @override
     def setupLight(self, *args, **kwargs):
-        self._gazeboController.setupLight(*args, **kwargs)
+        self._gazeboAdapter.setupLight(*args, **kwargs)
 
     @override
     def setJointsStateDirect(self, jointStates : Dict[Tuple[str,str],JointState]):
@@ -93,12 +89,12 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
         jointStates : Dict[Tuple[str,str],JointState]
             Keys are in the format (model_name, joint_name), the value is the joint state to enforce
         """
-        wasPaused = self._gazeboController.isPaused()
+        wasPaused = self._gazeboAdapter.isPaused()
         if wasPaused:
-            self._gazeboController.unpauseSimulation()
-        self._gazeboController.setJointsStateDirect(jointStates = jointStates)
+            self._gazeboAdapter.unpauseSimulation()
+        self._gazeboAdapter.setJointsStateDirect(jointStates = jointStates)
         if wasPaused:
-            self._gazeboController.pauseSimulation()
+            self._gazeboAdapter.pauseSimulation()
     
     @override
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
@@ -109,12 +105,12 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
         linksStates : Dict[Tuple[str,str],LinkState]
             Keys are in the format (model_name, link_name), the value is the link state to enforce
         """
-        wasPaused = self._gazeboController.isPaused()
+        wasPaused = self._gazeboAdapter.isPaused()
         if wasPaused:
-            self._gazeboController.unpauseSimulation()
-        self._gazeboController.setLinksStateDirect(linksStates = linksStates)
+            self._gazeboAdapter.unpauseSimulation()
+        self._gazeboAdapter.setLinksStateDirect(linksStates = linksStates)
         if wasPaused:
-            self._gazeboController.pauseSimulation()
+            self._gazeboAdapter.pauseSimulation()
 
     @override
     def getRenderings(self, requestedCameras : List[str]) -> Dict[str, Tuple[np.ndarray, float]]:
@@ -122,14 +118,14 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
             r = super().getRenderings(requestedCameras=requestedCameras)
             # ggLog.info("got image from ros")
         except:
-            r = self._gazeboController.getRenderings(requestedCameras=requestedCameras)
+            r = self._gazeboAdapter.getRenderings(requestedCameras=requestedCameras)
             # ggLog.info("got image from gazebo plugin")
         return r
 
     @override
     def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
         try:
-            js = self._gazeboController.getJointsState(requestedJoints=requestedJoints)
+            js = self._gazeboAdapter.getJointsState(requestedJoints=requestedJoints)
         except RequestFailError as e:
             missing_jonts = [jr for jr in requestedJoints if jr not in e.partialResult]
             js = super().getJointsState(requestedJoints=missing_jonts)
@@ -139,82 +135,77 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
     @override
     def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
         try:
-            ls =  self._gazeboController.getLinksState(requestedLinks=requestedLinks) # WARNING! These may not be the same frames as the urdf unes!
-            # ggLog.info("Got link state from ros")
+            ls =  self._gazeboAdapter.getLinksState(requestedLinks=requestedLinks) # WARNING! These may not be the same frames as the urdf ones!
         except RequestFailError as e:
-            # This allows to get the pose of links that are not tracked by ros e.g. manipulated objects
             missing_links = [rl for rl in requestedLinks if rl not in e.partialResult]
             ls = super().getLinksState(requestedLinks=missing_links)
-            # ggLog.info(f"Got link state for {ls.keys()} from gazebo plugin and link state for {e.partialResult.keys()} from ros")
             ls.update(e.partialResult)
-        
-        # ggLog.info(f"Link state is {ls}")
         return ls
 
     @override
     def step(self) -> float:
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not step.")
-        self._gazeboController.unpauseSimulation()
+        self._gazeboAdapter.unpauseSimulation()
         r = super().step()
-        self._gazeboController.pauseSimulation()
+        self._gazeboAdapter.pauseSimulation()
         return r
 
     @override
     def resetWorld(self):
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not reset.")
-        self._gazeboController.unpauseSimulation()
+        self._gazeboAdapter.unpauseSimulation()
         r = super().resetWorld()
-        self._gazeboController.pauseSimulation()
+        self._gazeboAdapter.pauseSimulation()
         return r
 
     def moveGripperSync(self, width : float, max_effort : float):
-        wasPaused = self._gazeboController.isPaused()
+        wasPaused = self._gazeboAdapter.isPaused()
         if wasPaused:
-            self._gazeboController.unpauseSimulation()
+            self._gazeboAdapter.unpauseSimulation()
         super().moveGripperSync(width, max_effort)
         if wasPaused:
-            self._gazeboController.pauseSimulation()
+            self._gazeboAdapter.pauseSimulation()
 
     @override
     def moveToEePoseSync(self,  poses : Dict[Tuple[str,str],List[float]] = None,
                                 do_cartesian = False, velocity_scaling : Optional[float] = None,
                                 acceleration_scaling : Optional[float] = None, ee_link : Optional[Tuple[str,str]] = None,
                                 reference_frame : Optional[str] = None):
-        wasPaused = self._gazeboController.isPaused()
+        wasPaused = self._gazeboAdapter.isPaused()
         if wasPaused:
-            self._gazeboController.unpauseSimulation()
+            self._gazeboAdapter.unpauseSimulation()
         super().moveToEePoseSync(poses = poses, do_cartesian = do_cartesian, velocity_scaling = velocity_scaling, acceleration_scaling = acceleration_scaling,
                                 ee_link = ee_link, reference_frame = reference_frame)
         if wasPaused:
-            self._gazeboController.pauseSimulation()
+            self._gazeboAdapter.pauseSimulation()
 
     @override
     def moveToJointPoseSync(self, jointPositions : Dict[Tuple[str,str],float], velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None) -> None:
-        wasPaused = self._gazeboController.isPaused()
+        wasPaused = self._gazeboAdapter.isPaused()
         if wasPaused:
-            self._gazeboController.unpauseSimulation()
+            self._gazeboAdapter.unpauseSimulation()
         super().moveToJointPoseSync(jointPositions = jointPositions, velocity_scaling=velocity_scaling, acceleration_scaling=acceleration_scaling)
         if wasPaused:
-            self._gazeboController.pauseSimulation()
+            self._gazeboAdapter.pauseSimulation()
 
     @override
     def freerun(self, duration_sec : float):
-        self._gazeboController.freerun(duration_sec)
+        self._gazeboAdapter.freerun(duration_sec)
 
     @override
-    def setJointsToObserve(self, jointsToObserve : List[Tuple[str,str]]):
-       super().setJointsToObserve(jointsToObserve=jointsToObserve)
-       self._gazeboController.setJointsToObserve(jointsToObserve=jointsToObserve)
+    def set_monitored_joints(self, jointsToObserve : List[Tuple[str,str]]):
+       super().set_monitored_joints(jointsToObserve=jointsToObserve)
+       self._gazeboAdapter.set_monitored_joints(jointsToObserve=jointsToObserve)
 
     @override
-    def setLinksToObserve(self, linksToObserve : List[Tuple[str,str]]):
-       super().setLinksToObserve(linksToObserve=linksToObserve)
-       self._gazeboController.setLinksToObserve(linksToObserve=linksToObserve)
+    def set_monitored_links(self, linksToObserve : List[Tuple[str,str]]):
+       super().set_monitored_links(linksToObserve=linksToObserve)
+       self._gazeboAdapter.set_monitored_links(linksToObserve=linksToObserve)
 
     @override
-    def setCamerasToObserve(self, camerasToRender : List[str] = []):
-       super().setCamerasToObserve(camerasToRender=camerasToRender)
-       self._gazeboController.setCamerasToObserve(camerasToRender=camerasToRender)
+    def set_monitored_cameras(self, camerasToRender : List[str] = []):
+       super().set_monitored_cameras(camerasToRender=camerasToRender)
+       self._gazeboAdapter.set_monitored_cameras(camerasToRender=camerasToRender)

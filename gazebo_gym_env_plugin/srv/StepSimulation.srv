@@ -8,8 +8,8 @@
 # Number of iterations to be executed (if this is set, step_duration must be zero)
 int32 iterations
 
-# Duration, in sim time, to step for, in seconds (if this is set, iterations must be zero)
-float64 step_duration_secs
+# Duration, in sim time, to step for, in nanoseconds (if this is set, iterations must be zero)
+int64 step_duration_nanosecs
 
 # Set to true to also receive a rendering in the response
 bool render
@@ -36,8 +36,11 @@ bool success
 # Number of iterations that were executed
 int32 iterations_done
 
+# Physics engine max step size
+float64 max_step_size
+
 # Duration, in sim time, of the step
-float64 step_duration_done_secs
+int64 step_duration_nanosecs
 
 # Error message in case of error
 string error_message

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
 import traceback
-from typing import List, Tuple, Dict, Any, Union
+from typing import List, Tuple, Dict, Any, Union, Optional
 import time
 import gazebo_msgs
 import gazebo_msgs.msg
@@ -17,11 +18,12 @@ from lr_gym.adapters.BaseSimulationAdapter import BaseSimulationAdapter
 from lr_gym.utils.utils import JointState, LinkState, RequestFailError
 import os
 import lr_gym.utils.dbg.ggLog as ggLog
-from lr_gym.utils.utils import Pose
+from lr_gym.utils.utils import Pose, buildRos1PoseStamped
 from lr_gym_ros.utils.gazebo_models_manager import delete_model, spawn_model
 import rospkg
 import lr_gym.utils
 import lr_gym.utils.utils
+from lr_gym.adapters.BaseAdapter import JointName, LinkName
 
 class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAdapter):
     """This class allows to control the execution of a Gazebo simulation.
@@ -56,11 +58,10 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
         super().__init__()
 
         self._stepLength_sec = stepLength_sec
-        self._lastUnpausedTime = 0
-        self._episodeIntendedSimDuration = 0
-        self._episodeWallStartTime = 0
-        self._totalRenderTime = 0
-        self._stepsTaken = 0
+        self._lastPausedTime = 0
+        self._episodeCountedSimDuration = 0
+        self._totalCountedSimDuration = 0
+        self._episode_steps_taken = 0
 
         self._lastStepRendered = None
         self._lastRenderResult = None
@@ -112,10 +113,10 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
         self._clockPublisher = rospy.Publisher("/clock", rosgraph_msgs.msg.Clock, queue_size=1)
 
 
-    def startController(self):
-        """Start up the controller. This must be called after setCamerasToObserve, setLinksToObserve and setJointsToObserve."""
+    def startup(self):
+        """Start up the controller. This must be called after set_monitored_cameras, set_monitored_links and set_monitored_joints."""
 
-        super().startController()
+        super().startup()
 
         self._makeRosConnections()
 
@@ -170,7 +171,7 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
         """
         ret = self._callService(self._pauseGazeboService)
         #rospy.loginfo("paused sim")
-        self._lastUnpausedTime = rospy.get_time()
+        self._lastPausedTime = rospy.get_time()
         return ret
 
     def unpauseSimulation(self) -> bool:
@@ -183,8 +184,8 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
 
         """
         t = rospy.get_time()
-        if self._lastUnpausedTime>t:
-            rospy.logwarn("Simulation time increased since last pause! (time diff = "+str(t-self._lastUnpausedTime)+"s)")
+        if self._lastPausedTime>t:
+            rospy.logwarn("Simulation time increased since last pause! (time diff = "+str(t-self._lastPausedTime)+"s)")
         ret = self._callService(self._unpauseGazeboService)
         #rospy.loginfo("unpaused sim")
         return ret
@@ -202,48 +203,21 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
 
         """
         self.pauseSimulation()
-        totalEpSimDuration = self.getEnvSimTimeFromStart()
+        totalEpSimDuration = self.getEnvTimeFromStartup()
 
-        ret = self._callService(self._resetGazeboService)
+        # ret = self._callService(self._resetGazeboService)
 
-        self._lastUnpausedTime = 0
 
-        # ggLog.info(f"totalEpSimDuration = {totalEpSimDuration}")
-        # ggLog.info(f"self._episodeIntendedSimDuration = {self._episodeIntendedSimDuration}")
-        totalSimTimeError = totalEpSimDuration - self._episodeIntendedSimDuration
+        totalSimTimeError = totalEpSimDuration - self._episodeCountedSimDuration
         if abs(totalSimTimeError)>=0.1:
             rospy.logwarn("Episode error in simulation time keeping = "+str(totalSimTimeError)+"s (This is just an upper bound, may actually be fine)")
 
-        # totalEpRealDuration = time.time() - self._episodeWallStartTime
-        # if self._episodeRealSimDuration!=0:
-        #     ratio = float(totalEpSimDuration)/self._episodeRealSimDuration
-        # else:
-        #     ratio = -1
-        # if totalEpRealDuration!=0:
-        #     totalRatio = float(totalEpSimDuration)/totalEpRealDuration
-        # else:
-        #     totalRatio = -1
-        # if totalEpSimDuration!=0:
-        #     rospy.loginfo(  "Duration: sim={:.3f}".format(totalEpSimDuration)+
-        #                     " real={:.3f}".format(totalEpRealDuration)+
-        #                     " sim/real={:.3f}".format(totalRatio)+ # Achieved sim/real time ratio
-        #                     " step-time-only ratio ={:.3f}".format(ratio)+ #This would be the sim/real time ratio if there was no overhead for sending actions and getting observations
-        #                     " totalRenderTime={:.4f}".format(self._totalRenderTime)+
-        #                     " realFps={:.2f}".format(self._stepsTaken/totalEpRealDuration)+
-        #                     " simFps={:.2f}".format(self._stepsTaken/totalEpSimDuration))
-        self._episodeIntendedSimDuration = 0
-        self._episodeWallStartTime = time.time()
-        self._totalRenderTime = 0
-        self._stepsTaken = 0
-
-        # Reset the time manually. Incredibly ugly, incredibly effective
-        t = rosgraph_msgs.msg.Clock()
-        self._clockPublisher.publish(t)
-
+        self._episodeCountedSimDuration = 0
+        self._episode_steps_taken = 0
 
 
         #rospy.loginfo("resetted sim")
-        return ret
+        return True
 
 
     def step(self) -> float:
@@ -267,23 +241,13 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
             Why the exception is raised.
 
         """
-
-        t0_real = time.time()
-        t0 = rospy.get_time()
-        self.unpauseSimulation()
-        t1 = rospy.get_time()
-        rospy.sleep(self._stepLength_sec)
-        t2 = rospy.get_time()
-        self.pauseSimulation()
-        t3 = rospy.get_time()
-        tf_real = time.time()
-        self._episodeIntendedSimDuration += t3 - t0
-        rospy.loginfo("t0 = "+str(t0)+"   t3 = "+str(t3))
-        rospy.loginfo("Unpaused for a duration between "+str(t2-t1)+"s and "+str(t3-t0)+"s")
-
-        self._stepsTaken+=1
-
-        return self._stepLength_sec
+        t0_ = self.getEnvTimeFromStartup()
+        self.freerun(self._stepLength_sec)
+        elapsed_time = self.getEnvTimeFromStartup() - t0_
+        self._episodeCountedSimDuration += elapsed_time
+        self._totalCountedSimDuration += elapsed_time
+        self._episode_steps_taken += 1
+        return elapsed_time
 
 
 
@@ -327,7 +291,7 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
                 gotit = jointProp.success
                 tries+=1
             if gotit:
-                jointState = JointState(list(jointProp.position), list(jointProp.rate), None) #NOTE: effort is not returned by the gazeoo service
+                jointState = JointState(list(jointProp.position), list(jointProp.rate), [0]) #NOTE: effort is not returned by the gazeoo service
                 gottenJoints[(modelName,jointName)] = jointState
             else:
                 missingJoints.append(joint)
@@ -376,9 +340,6 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
             raise RequestFailError(message=err, partialResult=gottenLinks)
        
         return gottenLinks
-
-    def getEnvSimTimeFromStart(self) -> float:
-        return rospy.get_time()
 
 
     def setRosMasterUri(self, rosMasterUri : str):
@@ -459,13 +420,13 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
             req.link_state = gazebo_msgs.msg.LinkState()
             req.link_state.link_name = modelName+"::"+linkName
             req.link_state.reference_frame = "world"
-            req.link_state.pose = linkState.pose.getPoseStamped(frame_id = "world").pose
-            req.link_state.twist.linear.x = linkState.pos_velocity_xyz[0]
-            req.link_state.twist.linear.y = linkState.pos_velocity_xyz[1]
-            req.link_state.twist.linear.z = linkState.pos_velocity_xyz[2]
-            req.link_state.twist.angular.x = linkState.ang_velocity_xyz[0]
-            req.link_state.twist.angular.y = linkState.ang_velocity_xyz[1]
-            req.link_state.twist.angular.z = linkState.ang_velocity_xyz[2]
+            req.link_state.pose = buildRos1PoseStamped(linkState.pose.position, linkState.pose.orientation_xyzw, None).pose
+            req.link_state.twist.linear.x = linkState.pos_velocity_xyz[0].item()
+            req.link_state.twist.linear.y = linkState.pos_velocity_xyz[1].item()
+            req.link_state.twist.linear.z = linkState.pos_velocity_xyz[2].item()
+            req.link_state.twist.angular.x = linkState.ang_velocity_xyz[0].item()
+            req.link_state.twist.angular.y = linkState.ang_velocity_xyz[1].item()
+            req.link_state.twist.angular.z = linkState.ang_velocity_xyz[2].item()
 
             #print(req)
             #print(type(req))
@@ -503,7 +464,13 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
         self.setRosMasterUri(self._mmRosLauncher.getRosMasterUri())
 
     
-    def spawn_model(self, model_file : Union[str,Tuple[str,str]], model_name : str, pose : Pose, model_kwargs : Dict[Any,Any] = {}, model_format = None):
+    def spawn_model(self,
+                    model_file : Optional[Union[str,Tuple[str,str]]],
+                    model_name : str,
+                    pose : Pose,
+                    model_kwargs : Dict[Any,Any] = {},
+                    model_format = None,
+                    model_definition_string : Optional[str] = None):
         if isinstance(model_file, str):
             path = model_file
         elif isinstance(model_file, tuple):        
@@ -511,7 +478,7 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
         else:
             raise AttributeError("model_definition should be either a tuple (pkg, path) or a string (path)")
 
-        if model_format is None:
+        if model_format is None and model_file is not None:
             filename_split = path.split(".")
             ext = filename_split[-1]
             if ext == "urdf":
@@ -524,15 +491,18 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
                     model_format = "urdf"
                 elif ext == "sdf":
                     model_format = "sdf"
-            if model_format is None:
-                raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_definition = {model_file}")
+        if model_format is None:
+            raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_file = {model_file}")
         
-        spawn_model(path,
+        spawn_model(xacro_file_path=path,
                     pose=pose,
                     model_name=model_name,
                     args=model_kwargs,
-                    format=model_format)
+                    format=model_format,
+                    xacro_string=model_definition_string)
+        return model_name
 
     def delete_model(self, model_name : str):
         """Delete a model from the environment"""
         delete_model(model_name=model_name)
+

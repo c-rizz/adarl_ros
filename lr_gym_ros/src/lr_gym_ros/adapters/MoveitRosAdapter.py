@@ -85,16 +85,16 @@ class MoveitRosAdapter(RosAdapter, BaseCartesianPositionAdapter, BaseJointPositi
         return ac
 
     @override
-    def startController(self):
+    def startup(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
-        The topics to listen to must be specified using the setCamerasToObserve, setJointsToObserve, and setLinksToObserve methods
+        The topics to listen to must be specified using the set_monitored_cameras, set_monitored_joints, and set_monitored_links methods
 
 
 
         """
 
-        super().startController()
+        super().startup()
         #self._getEePoseService = self._connectRosService("/move_helper/get_ee_pose")
         #self._getJointStateService = self._connectRosService("/move_helper/get_joint_state")
         self._addCollisionBoxService = self._connectRosService("/move_helper/add_collision_box", lr_gym_ros_utils.srv.AddCollisionBox)

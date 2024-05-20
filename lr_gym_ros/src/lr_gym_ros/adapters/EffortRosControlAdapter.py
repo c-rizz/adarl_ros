@@ -88,10 +88,10 @@ class EffortRosControlAdapter(RosAdapter, BaseJointEffortAdapter):
             if initialPosition not in usedInitialpositions:
                 raise RuntimeError("Initial position "+str(initialPosition)+" is not used by any controller")
 
-    def startController(self):
+    def startup(self):
         """Start the ROS listeners for receiving images, link states and joint states.
 
-        The topics to listen to must be specified using the setCamerasToObserve, setJointsToObserve, and setLinksToObserve methods
+        The topics to listen to must be specified using the set_monitored_cameras, set_monitored_joints, and set_monitored_links methods
 
         Returns
         -------
@@ -104,7 +104,7 @@ class EffortRosControlAdapter(RosAdapter, BaseJointEffortAdapter):
             Why the exception is raised.
 
         """
-        super().startController()
+        super().startup()
 
         self._controllerManagementHelper = ControllerManagementHelper()
         self._trajectoryControllerHelpers = {}
@@ -159,4 +159,4 @@ class EffortRosControlAdapter(RosAdapter, BaseJointEffortAdapter):
         self._controllerManagementHelper.waitForControllersStart(effortControllers)
         rospy.logdebug("EffortRosControlAdapter: effort controllers started")
 
-        self._simTimeStart = rospy.get_time()
+        self._startup_env_time = rospy.get_time()
