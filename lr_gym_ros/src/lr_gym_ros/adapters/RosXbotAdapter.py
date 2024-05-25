@@ -304,7 +304,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     @override
     def setJointsImpedanceCommand(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]]) -> None:
-        ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
+        # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
         jdi = self.get_joint_device_info(after_env_time=float("-inf"))
         if jdi is not None and jdi.mask == 0:
             ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
@@ -315,15 +315,15 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             self._commanded_joint_impedances_by_name[full_jname] = jcmd
 
     def _apply_commanded_joint_impedances(self):
-        self.apply_joint_impedances(list(self._commanded_joint_impedances_by_name.items()))
+        self.apply_joint_impedances(self._commanded_joint_impedances_by_name)
 
     @override
-    def apply_joint_impedances(self, joint_impedances_pvesd : List[Tuple[Tuple[str,str],Tuple[float,float,float,float,float]]]):
-        ggLog.info(f"applying joint impedances {joint_impedances_pvesd}")
+    def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]]):
+        # ggLog.info(f"applying joint impedances {joint_impedances_pvesd}")
         if len (joint_impedances_pvesd)==0:
             return
         commanded_joint_impedances_by_jid = {}
-        for full_jname, jcmd in joint_impedances_pvesd:
+        for full_jname, jcmd in joint_impedances_pvesd.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
                 raise RuntimeError(f"Commanded joint impedance for model different from the controleld one (asked '{model_name, jname}', but have '{self._model_name}')")
@@ -345,7 +345,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
         if used_fallback:
             ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
-            ggLog.warn(f"Which correspond to joint names:\n {[ji[0] for ji in joint_impedances_pvesd]}")
+            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd.items()]}")
 
         self._robot_interface.setStiffness(pgains)
         self._robot_interface.setDamping(vgains)
@@ -403,6 +403,18 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def step(self) -> float:
         step_duration = super().step()
         self.clear_commands()
+
+        # model = self._robot_interface.model()
+        # model.setJointPosition(self._robot_interface.getJointPosition())
+        # model.setJointVelocity(self._robot_interface.getJointVelocity())
+        # model.setJointAcceleration(self._robot_interface.getJointAcceleration())
+        # model.update()
+        # ggLog.info(f"q = {model.getJointPosition()}")
+        # ggLog.info(f"v = {model.getJointVelocity()}")
+        # ggLog.info(f"a = {model.getJointAcceleration()}")
+        # ggLog.info(f"tau = {model.computeInverseDynamics()}")
+
+
         return step_duration
 
     def _switch_control(self, switch_on : bool, timeout_s : float = float("+inf")) -> bool:

@@ -644,7 +644,7 @@ namespace gazebo
       for(unsigned int i=0;i<joint_properties.position_limit_low.size();i++)
         joint->SetParam("lo_stop",i,joint_properties.position_limit_low[i]);
       for(unsigned int i=0;i<joint_properties.position_limit_high.size();i++)
-        joint->SetParam("high_stop",i,joint_properties.position_limit_high[i]);
+        joint->SetParam("hi_stop",i,joint_properties.position_limit_high[i]);
       // 
       // for(unsigned int i=0;i< req.ode_joint_config.damping.size();i++)
       //   joint->SetDamping(i,req.ode_joint_config.damping[i]);

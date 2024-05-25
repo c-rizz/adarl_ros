@@ -162,7 +162,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
             if not response.joints_info.success:
                 ggLog.warn("Error getting joint information: "+response.joints_info.error_message)
             for ji in response.joints_info.joints_info:
-                ggLog.info(f"Got joint info {(ji.joint_id.model_name,ji.joint_id.joint_name)}.position = {ji.position}")
+                # ggLog.info(f"Got joint info {(ji.joint_id.model_name,ji.joint_id.joint_name)}.position = {ji.position}")
                 self._simulationState.jointsState[(ji.joint_id.model_name,ji.joint_id.joint_name)] = ji
 
         if len(self._linksToObserve)>0:
