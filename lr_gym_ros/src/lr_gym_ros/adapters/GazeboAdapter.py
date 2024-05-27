@@ -147,7 +147,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         self._totalCountedSimDuration_nano += request.step_duration_nanosecs
         self._simulationState.stepNumber = self._episode_steps_taken
 
-        #print("Step response = "+str(response))
+        # print("Step response = "+str(response))
         #rospy.loginfo("Transfer time of stepping response = "+str(time.time()-response.response_time))
 
 
@@ -162,7 +162,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
             if not response.joints_info.success:
                 ggLog.warn("Error getting joint information: "+response.joints_info.error_message)
             for ji in response.joints_info.joints_info:
-                # ggLog.info(f"Got joint info {(ji.joint_id.model_name,ji.joint_id.joint_name)}.position = {ji.position}")
+                # ggLog.info(f"Got joint info {(ji.joint_id.model_name,ji.joint_id.joint_name)} = {ji}")
                 self._simulationState.jointsState[(ji.joint_id.model_name,ji.joint_id.joint_name)] = ji
 
         if len(self._linksToObserve)>0:

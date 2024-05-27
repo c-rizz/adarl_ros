@@ -543,15 +543,16 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # self.setJointsPositionCommand(jointPositions=jointPositions)
         t0_env = self.getEnvTimeFromStartup()
         t0_wall = time.monotonic()
-        reached_position = False
+        js = self.getJointsState(list(jointPositions.keys()))
+        errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
+        reached_position = all([abs(e) < joint_position_tolerance for e in errors])
         elapsed_env_time = 0.0
         elapsed_wall_time = 0.0
         while not reached_position:
             self.freerun(self._stepLength_sec)
             js = self.getJointsState(list(jointPositions.keys()))
             errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
-            reached = [abs(e) < joint_position_tolerance for e in errors]
-            reached_position = all(reached)
+            reached_position = all([abs(e) < joint_position_tolerance for e in errors])
             elapsed_env_time = self.getEnvTimeFromStartup() - t0_env
             elapsed_wall_time = time.monotonic() - t0_wall
             if elapsed_env_time > timeout_env:
