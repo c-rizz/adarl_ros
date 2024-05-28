@@ -209,12 +209,15 @@ namespace gazebo
       //  - physics::Joint::GetForceTorque(int) which seems to return the full force-torques between the two adjecent links
       // Looking into the code GetForce seems to actually return the commanded efforts for the specified DOF. This
       // can be seen in ODEJoint, BulletJoint, DARTJoint and SimbodyJoint. They all return the value of _forceApplied.
-      // Just using this should be fine as I would expect that in simulation the applied force is
-      // be the same as he acutal torque. If this turns out to not be true, it may be necessary to use GetForceTorque
-      // and do some kind of projection.
+      // This actually differs from what is applied to the joint due to the internal velocity damping, which is added to the 
+      // joint torque, but is not saved in _forceApplied. In the case of explicit damping this is true because it is aplied directly with
+      // SetForceImpl (at least in ODE, https://github.com/gazebosim/gazebo-classic/blob/e4b4d0fb752c7e43e34ab97d0e01a2a3eaca1ed4/gazebo/physics/ode/ODEJoint.cc#L1206).
+      // Implicit damping does something more complicated, but by default it is not used.
+      // Anyway, this damping usse can be compensated by removing the damping component from GetForce().
+      // An alternative may be to use GetForceTorque and do some kind of projection.
 
       ret.effort.clear();
-      ret.effort.push_back(joint->GetForce(0));
+      ret.effort.push_back(joint->GetForce(0) - joint->GetDamping(0)*joint->GetVelocity(0));
 
 
 
