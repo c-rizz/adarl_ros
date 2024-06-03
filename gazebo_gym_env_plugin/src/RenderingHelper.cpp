@@ -75,9 +75,9 @@ void RenderingHelper::searchCameras()
 {
   gazebo::sensors::SensorManager* smanager = gazebo::sensors::SensorManager::Instance();
   std::vector<gazebo::sensors::SensorPtr> sensors = smanager->GetSensors();
-  std::set<std::string> known_names;
+  std::set<std::string> already_known_names;
   for(auto cam : gymCameras)
-    known_names.insert(cam->sensor->Name());
+    already_known_names.insert(cam->sensor->Name());
   gymCameras.clear();
   for(gazebo::sensors::SensorPtr sp : sensors)
   {
@@ -86,7 +86,7 @@ void RenderingHelper::searchCameras()
       std::string rosTfFrame_id = "";//TODO: somehow get this
       gymCameras.push_back(std::make_shared<GymCamera>(std::dynamic_pointer_cast<gazebo::sensors::CameraSensor>(sp),rosTfFrame_id));
       std::string name = gymCameras.back()->sensor->Name();
-      if(known_names.find(name) == known_names.end())
+      if(already_known_names.find(name) == already_known_names.end())
         ROS_DEBUG_STREAM("Found new camera "<<name);
     }
   }

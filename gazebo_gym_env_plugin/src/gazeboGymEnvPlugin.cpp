@@ -28,6 +28,7 @@
 #include "utils.hpp"
 #include "RenderingHelper.hpp"
 #include "JointEffortControl.hpp"
+#include "JointMonitor.hpp"
 
 namespace gazebo
 {
@@ -67,6 +68,7 @@ namespace gazebo
 
     std::shared_ptr<RenderingHelper> renderingHelper;
     std::shared_ptr<JointEffortControl> jointEffortControl;
+    std::shared_ptr<JointMonitor> jointMonitor;
 
     AverageKeeper avgRenderRequestDelay;
     AverageKeeper avgStepRequestDelay;
@@ -110,7 +112,7 @@ namespace gazebo
      * @param _parent         [description]
      * @param sdf::ElementPtr [description]
      */
-    void Load(physics::WorldPtr _parent, sdf::ElementPtr /*_sdf*/)
+    void Load(physics::WorldPtr _parent, sdf::ElementPtr sdf)
     {
       if (!ros::isInitialized())
       {
@@ -119,10 +121,20 @@ namespace gazebo
         return;
       }
 
+      double joint_state_smoothing = 0.0;
+      if(sdf->HasElement("joint_state_smoothing"))
+      {
+        bool success = sdf->GetElement("joint_state_smoothing")->GetAttribute("value")->Get(joint_state_smoothing);
+        if(!success)
+          throw std::runtime_error("Invalid joint_state_smoothing in sdf.");
+      }
+      ROS_INFO_STREAM("Set joint_state_smoothing to "<<joint_state_smoothing);
+
       world = _parent;
 
       renderingHelper = std::make_shared<RenderingHelper>(world);
       jointEffortControl = std::make_shared<JointEffortControl>(world);
+      jointMonitor = std::make_shared<JointMonitor>(world, joint_state_smoothing);
 
       this->nodeHandle = std::make_shared<ros::NodeHandle>("~/gym_env_interface");
       //ROS_INFO("Got node handle");
@@ -190,34 +202,46 @@ namespace gazebo
      */
     int getJointInfo(const gazebo_gym_env_plugin::JointId& jointId, gazebo_gym_env_plugin::JointInfo& ret)
     {
-      //ROS_DEBUG_STREAM("Getting joint info for "<<jointId.model_name<<"."<<jointId.joint_name);
-      gazebo::physics::ModelPtr model = world->ModelByName(jointId.model_name);
-      if (!model)
-        return -1;
-      gazebo::physics::JointPtr joint = model->GetJoint(jointId.joint_name);
-      if (!joint)
-        return -2;
+      // ROS_INFO_STREAM("Getting joint '"<<jointId.model_name<<":"<<jointId.joint_name<<"'");
+      try
+      {
+        jointMonitor->getJointState(std::pair{jointId.model_name, jointId.joint_name}, ret);
+      }
+      catch (std::out_of_range& e)
+      {
+        std::string m = "Failed to get state for joint '"+jointId.model_name+":"+jointId.joint_name+"'";
+        ROS_ERROR_STREAM(""<<m);
+        throw std::runtime_error(m);
+      }
 
-      ret.joint_id = jointId;
-      ret.position.clear();
-      ret.position.push_back(joint->Position(0));
-      ret.rate.clear();
-      ret.rate.push_back(joint->GetVelocity(0));
+      // //ROS_DEBUG_STREAM("Getting joint info for "<<jointId.model_name<<"."<<jointId.joint_name);
+      // gazebo::physics::ModelPtr model = world->ModelByName(jointId.model_name);
+      // if (!model)
+      //   return -1;
+      // gazebo::physics::JointPtr joint = model->GetJoint(jointId.joint_name);
+      // if (!joint)
+      //   return -2;
 
-      // About the joint effort there is a bit of confusion. We have:
-      //  - physics:Joint::GetForce(int) which the doc says returns "external forces"
-      //  - physics::Joint::GetForceTorque(int) which seems to return the full force-torques between the two adjecent links
-      // Looking into the code GetForce seems to actually return the commanded efforts for the specified DOF. This
-      // can be seen in ODEJoint, BulletJoint, DARTJoint and SimbodyJoint. They all return the value of _forceApplied.
-      // This actually differs from what is applied to the joint due to the internal velocity damping, which is added to the 
-      // joint torque, but is not saved in _forceApplied. In the case of explicit damping this is true because it is aplied directly with
-      // SetForceImpl (at least in ODE, https://github.com/gazebosim/gazebo-classic/blob/e4b4d0fb752c7e43e34ab97d0e01a2a3eaca1ed4/gazebo/physics/ode/ODEJoint.cc#L1206).
-      // Implicit damping does something more complicated, but by default it is not used.
-      // Anyway, this damping usse can be compensated by removing the damping component from GetForce().
-      // An alternative may be to use GetForceTorque and do some kind of projection.
+      // ret.joint_id = jointId;
+      // ret.position.clear();
+      // ret.position.push_back(joint->Position(0));
+      // ret.rate.clear();
+      // ret.rate.push_back(joint->GetVelocity(0));
 
-      ret.effort.clear();
-      ret.effort.push_back(joint->GetForce(0) - joint->GetDamping(0)*joint->GetVelocity(0));
+      // // About the joint effort there is a bit of confusion. We have:
+      // //  - physics:Joint::GetForce(int) which the doc says returns "external forces"
+      // //  - physics::Joint::GetForceTorque(int) which seems to return the full force-torques between the two adjecent links
+      // // Looking into the code GetForce seems to actually return the commanded efforts for the specified DOF. This
+      // // can be seen in ODEJoint, BulletJoint, DARTJoint and SimbodyJoint. They all return the value of _forceApplied.
+      // // This actually differs from what is applied to the joint due to the internal velocity damping, which is added to the 
+      // // joint torque, but is not saved in _forceApplied. In the case of explicit damping this is true because it is aplied directly with
+      // // SetForceImpl (at least in ODE, https://github.com/gazebosim/gazebo-classic/blob/e4b4d0fb752c7e43e34ab97d0e01a2a3eaca1ed4/gazebo/physics/ode/ODEJoint.cc#L1206).
+      // // Implicit damping does something more complicated, but by default it is not used.
+      // // Anyway, this damping usse can be compensated by removing the damping component from GetForce().
+      // // An alternative may be to use GetForceTorque and do some kind of projection.
+
+      // ret.effort.clear();
+      // ret.effort.push_back(joint->GetForce(0) - joint->GetDamping(0)*joint->GetVelocity(0));
 
 
 
@@ -236,15 +260,14 @@ namespace gazebo
       for(const gazebo_gym_env_plugin::JointId& jointId : jointIds)
       {
         gazebo_gym_env_plugin::JointInfo jointInfo;
-        int r = getJointInfo(jointId, jointInfo);
-        if(r<0)
+        try
+        {
+          getJointInfo(jointId, jointInfo);
+        }
+        catch (std::runtime_error& e)
         {
           ret.success=false;
-          ret.error_message = ret.error_message + "\n - Could not get info for joint '" + jointId.model_name + "." + jointId.joint_name+"'. Error "+std::to_string(r)+": ";
-          if (r == -1)
-            ret.error_message = ret.error_message + "model not found.";
-          else if (r == -2)
-            ret.error_message = ret.error_message + "joint not found.";
+          ret.error_message = ret.error_message + "\n - Could not get info for joint '" + jointId.model_name + "." + jointId.joint_name+"'. Error "+e.what();
           ROS_WARN_STREAM(ret.error_message);
         }
         ret.joints_info.push_back(jointInfo);
@@ -375,11 +398,11 @@ namespace gazebo
         Step(int _steps) makes the simulation run even if it is paused, for _steps steps
 
       So:
-        We keep the simulation paused and we make it go forward with Step(int). We cannot suse stop because it
+        We keep the simulation paused and we make it go forward with Step(int). We cannot use stop because it
         also stops the sensor updates, which prevents us from using the cameras, we cannot render them ourselves
         because even the Render event gets stopped.
       */
-      if(req.iterations !=0 && req.step_duration_nanosecs!=0)
+      if(req.iterations !=0 && req.step_duration_picosecs!=0)
       {
         res.success = false;
         res.error_message = "GazeboGymEnvPlugin: step was requested specifying both iterations and step_duration. Only one can be set at a time. No action taken.";
@@ -403,7 +426,7 @@ namespace gazebo
 
       res.success = false;
       res.iterations_done = 0;
-      res.step_duration_nanosecs = 0;
+      res.step_duration_picosecs = 0;
       for(const gazebo_gym_env_plugin::JointEffortRequest& jer : req.joint_effort_requests)
       {
         if(!doesJointExist(jer.joint_id))
@@ -427,8 +450,8 @@ namespace gazebo
 
       totStepCallbackDuration.onTaskStart();
       int requestedIterations = -1;
-      if(req.step_duration_nanosecs!=0)
-        requestedIterations = req.step_duration_nanosecs/(1000000000*world->Physics()->GetMaxStepSize());
+      if(req.step_duration_picosecs!=0)
+        requestedIterations = req.step_duration_picosecs/(1000000000000*world->Physics()->GetMaxStepSize());
       else
         requestedIterations = req.iterations;
 
@@ -442,9 +465,9 @@ namespace gazebo
 
 
       int iterationsBefore = world->Iterations();
+      // ROS_INFO_STREAM("Stepping simulation "<<requestedIterations<<" times");
       if(requestedIterations>0)
       {
-        //ROS_INFO("Stepping simulation...");
         avgSteppingTime.onTaskStart();
         world->Step(requestedIterations);
         avgSteppingTime.onTaskEnd();
@@ -464,7 +487,7 @@ namespace gazebo
       res.error_message = "No error";
       res.iterations_done = iterations_done;
       res.max_step_size = world->Physics()->GetMaxStepSize();
-      res.step_duration_nanosecs = int64_t(durationTime.sec) * 1000000000 + durationTime.nsec;
+      res.step_duration_picosecs = iterations_done * int64_t(world->Physics()->GetMaxStepSize() * 1000000000000);
       res.response_time = ros::WallTime::now().toSec();
 
       stepCounter++;
@@ -527,7 +550,7 @@ namespace gazebo
 
       res.success = false;
       res.iterations_done = 0;
-      res.step_duration_nanosecs = 0;
+      res.step_duration_picosecs = 0;
       if (req.joint_effort_requests.size()!=0)
       {
         res.error_message = "Requested effort on observe service. joint_effort_requests must be empty";
@@ -542,7 +565,7 @@ namespace gazebo
         ROS_WARN_STREAM(res.error_message);
         return true;//must return false only if we cannot send a response
       }
-      if (req.step_duration_nanosecs!=0)
+      if (req.step_duration_picosecs!=0)
       {
         res.error_message = "Requested step_duration_nanosecs on observe service. step_duration_nanosecs must be 0";
         res.response_time = ros::WallTime::now().toSec();
@@ -567,7 +590,7 @@ namespace gazebo
       res.success = true;
       res.error_message = "No error";
       res.iterations_done = 0;
-      res.step_duration_nanosecs = 0;
+      res.step_duration_picosecs = 0;
       res.response_time = ros::WallTime::now().toSec();
 
 

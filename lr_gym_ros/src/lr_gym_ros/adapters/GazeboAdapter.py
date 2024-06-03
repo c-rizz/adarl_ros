@@ -62,7 +62,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         self._usePersistentConnections = usePersistentConnections
         self._simulationState = GazeboAdapter._SimState()
         self._jointEffortsToRequest = []
-        self._totalCountedSimDuration_nano = 0
+        self._totalCountedSimDuration_pico = 0
 
     def _makeRosConnections(self):
         super()._makeRosConnections()
@@ -97,10 +97,10 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         # ggLog.info(f"Called _infoGazeboService")
         return ret
 
-    def _step_sim(self, duration_nano : int):
-        # ggLog.info(f"freerun({duration_sec})")
+    def _step_sim(self, duration_pico : int):
+        # ggLog.info(f"_step_sim({duration_pico})")
         request = gazebo_gym_env_plugin.srv.StepSimulationRequest()
-        request.step_duration_nanosecs = duration_nano
+        request.step_duration_picosecs = duration_pico
         request.request_time = time.time()
         #ggLog.info("self._camerasToObserve = "+str(self._camerasToObserve))
         if len(self._camerasToObserve)>0:
@@ -141,10 +141,10 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
                     time.sleep(1)
             servicecalltries += 1
         self._episode_steps_taken +=1
-        step_duration_sec = request.step_duration_nanosecs / 1e9
+        step_duration_sec = request.step_duration_picosecs / 1e12
         self._episodeCountedSimDuration += step_duration_sec
         self._totalCountedSimDuration += step_duration_sec
-        self._totalCountedSimDuration_nano += request.step_duration_nanosecs
+        self._totalCountedSimDuration_pico += request.step_duration_picosecs 
         self._simulationState.stepNumber = self._episode_steps_taken
 
         # print("Step response = "+str(response))
@@ -178,11 +178,11 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
 
     @override
     def freerun(self, duration_sec : float):
-        self._step_sim(duration_nano=int(duration_sec * 1e9))
+        self._step_sim(duration_pico=int(duration_sec * 1e12))
     
     @override
     def getEnvTimeFromStartup(self) -> float:
-        return self._totalCountedSimDuration_nano /1e9
+        return self._totalCountedSimDuration_pico /1e12
     
     def _performRender(self, requestedCameras : List[str]):
         # ggLog.info("Rendering cameras "+str(requestedCameras))

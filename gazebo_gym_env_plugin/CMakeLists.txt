@@ -137,7 +137,12 @@ include_directories(
 )
 
 ## Declare a C++ library
-add_library(gazebo_gym_env_plugin SHARED src/gazeboGymEnvPlugin.cpp src/utils.cpp src/RenderingHelper.cpp src/JointEffortControl.cpp)
+add_library(gazebo_gym_env_plugin SHARED 
+                    src/gazeboGymEnvPlugin.cpp
+                    src/utils.cpp
+                    src/RenderingHelper.cpp
+                    src/JointEffortControl.cpp
+                    src/JointMonitor.cpp)
 add_dependencies(gazebo_gym_env_plugin ${PROJECT_NAME}_generate_messages_cpp )
 
 ## Add cmake target dependencies of the library
