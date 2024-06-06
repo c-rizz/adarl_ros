@@ -26,7 +26,7 @@ cd $1
 mkdir src
 cd src
 
-git clone --branch a2110 https://github.com/c-rizz/lr_gym_ros.git
+git clone --branch a2110 https://github.com/c-rizz/adarl_ros.git
 git clone --branch a2110 https://github.com/c-rizz/lr_panda.git
 git clone --branch a2110 https://github.com/c-rizz/lr_panda_moveit_config.git
 git clone --branch a2110 https://github.com/c-rizz/lr_realsense.git
@@ -42,8 +42,8 @@ cd $1
 
 echo "Creating python virtualenv..."
 sleep 3
-src/lr_gym_ros/lr_gym_ros/build_virtualenv.sh sb3
-. ./virtualenv/lr_gym_ros_sb/bin/activate
+src/adarl_ros/adarl_ros/build_virtualenv.sh sb3
+. ./virtualenv/adarl_ros_sb/bin/activate
 
 echo "Installing dependencies..."
 sleep 3

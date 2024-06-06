@@ -7,7 +7,7 @@ import sensor_msgs
 import time
 
 """
-	This files uses the lr_gym_ros_env plugin to save the camera renderings to file
+	This files uses the adarl_ros_env plugin to save the camera renderings to file
 """
 
 
