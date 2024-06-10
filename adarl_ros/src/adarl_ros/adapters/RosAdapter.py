@@ -63,7 +63,7 @@ class RosAdapter(BaseAdapter):
         self._mmRosLauncher : adarl_ros_utils.ros_launch_utils.MultiMasterRosLauncher = None
 
 
-    def freerun(self, duration_sec : float):
+    def run(self, duration_sec : float):
         rospy.sleep(duration_sec)
 
 
@@ -77,7 +77,7 @@ class RosAdapter(BaseAdapter):
         # ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
         if sleepDuration > 0:
             #rospy.loginfo("Sleeping "+str(sleepDuration))
-            self.freerun(sleepDuration)
+            self.run(sleepDuration)
         else:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
         t = self.getEnvTimeFromStartup()
@@ -225,7 +225,7 @@ class RosAdapter(BaseAdapter):
                 ggLog.warn(f"Waiting for images since {rospy.get_time()-call_time}s. Still missing: {camerasMissing}")
                 adarl.utils.beep.beep()
                 lastErrTime = rospy.get_time()
-            self.freerun(0.01)
+            self.run(0.01)
 
         waitTime = rospy.get_time() - call_time
         self._cameraMsgWaitAvg.addValue(waitTime)
@@ -280,7 +280,7 @@ class RosAdapter(BaseAdapter):
                         missingJoints.append(j)
                 if len(missingJoints) == 0 or not self._blocking_observation:
                     break
-                self.freerun(0.01)
+                self.run(0.01)
 
                 if rospy.get_time() - lastErrTime > 10:
                     ggLog.warn(f"Waiting for joints since {rospy.get_time()-call_time}s. Still missing: {missingJoints}")
@@ -355,7 +355,7 @@ class RosAdapter(BaseAdapter):
                     missingLinks.append(lnm)
             if len(missingLinks) == 0 or not self._blocking_observation:
                 break
-            self.freerun(0.01)
+            self.run(0.01)
 
             if rospy.get_time() - lastErrTime > 10:
                 ggLog.warn(f"Waiting for links since {rospy.get_time()-call_time}s. Still missing: {missingLinks}")

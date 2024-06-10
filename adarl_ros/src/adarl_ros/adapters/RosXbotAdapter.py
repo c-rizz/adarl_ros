@@ -247,7 +247,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         #TODO: get the delay time somehow
         # obsDelay = float("+inf")
         # while obsDelay > self._maxObsAge:
-        #     self.freerun(0.001)
+        #     self.run(0.001)
         #     self._robot_interface.sense(update_model=False)
         #     obsDelay = self._robot_interface.getTime() - self._robot_interface.getTimestampRx()            
         # self._jointStateMsgAgeAvg.addValue(obsDelay)
@@ -285,7 +285,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         #TODO: get the delay time somehow
         # obsDelay = float("+inf")
         # while obsDelay > self._maxObsAge:
-        #     self.freerun(0.001)
+        #     self.run(0.001)
         #     self._robot_interface.sense(update_model=True)
         #     obsDelay = self._robot_interface.getTime() - self._robot_interface.getTimestampRx()            
         # self._jointStateMsgAgeAvg.addValue(obsDelay)
@@ -406,9 +406,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._apply_commanded_joint_impedances() 
 
     @override
-    def freerun(self, duration_sec: float):
+    def run(self, duration_sec: float):
         self._apply_controls()
-        super().freerun(duration_sec)
+        super().run(duration_sec)
 
     @override
     def step(self) -> float:
@@ -560,7 +560,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         elapsed_env_time = 0.0
         elapsed_wall_time = 0.0
         while not reached_position:
-            self.freerun(self._stepLength_sec)
+            self.run(self._stepLength_sec)
             js = self.getJointsState(list(jointPositions.keys()))
             errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
             reached_position = all([abs(e) < joint_position_tolerance for e in errors])

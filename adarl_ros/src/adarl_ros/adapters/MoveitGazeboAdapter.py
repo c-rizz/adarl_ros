@@ -192,8 +192,8 @@ class MoveitGazeboAdapter(MoveitRosAdapter, BaseSimulationAdapter):
             self._gazeboAdapter.pauseSimulation()
 
     @override
-    def freerun(self, duration_sec : float):
-        self._gazeboAdapter.freerun(duration_sec)
+    def run(self, duration_sec : float):
+        self._gazeboAdapter.run(duration_sec)
 
     @override
     def set_monitored_joints(self, jointsToObserve : List[Tuple[str,str]]):

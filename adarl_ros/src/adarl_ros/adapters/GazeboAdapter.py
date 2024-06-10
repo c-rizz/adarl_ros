@@ -177,7 +177,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         # ggLog.info(f"Stepped of {request.step_duration_nanosecs / 1e9:.10f} (requested {duration_sec:.10f})s")
 
     @override
-    def freerun(self, duration_sec : float):
+    def run(self, duration_sec : float):
         self._step_sim(duration_pico=int(duration_sec * 1e12))
     
     @override

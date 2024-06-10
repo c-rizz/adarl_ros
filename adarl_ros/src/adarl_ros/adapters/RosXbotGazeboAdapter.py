@@ -100,9 +100,9 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
        self._gazeboAdapter.set_monitored_cameras(camerasToRender=camerasToRender)
 
     @override
-    def freerun(self, duration_sec : float):
+    def run(self, duration_sec : float):
         self._apply_controls()
-        self._gazeboAdapter.freerun(duration_sec)
+        self._gazeboAdapter.run(duration_sec)
 
     @override
     def startup(self):
@@ -141,20 +141,20 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
         mask = -1
         def check_done():
-            # This will be run at the end of the async freerun. Either if it times out
+            # This will be run at the end of the async run. Either if it times out
             # or if it completes (successfully or not)
             nonlocal mask
             # ggLog.info(f"callback: mask = {mask}")
             if mask != control_mask:
                 raise RuntimeError(f"Failed to switch control to {mask}.")
-        self.freerun_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
         # self._gazeboAdapter.unpauseSimulation()
         mask = super()._setup_joint_control(control_mask, timeout_s=timeout_s)
         # ggLog.info(f"_setup_joint_control returned {control_mask}")
         # ggLog.info(f"control_mask = {control_mask}")
         # self._gazeboAdapter.pauseSimulation()
-        self.stop_freerun_async()
-        self.wait_freerun_async() # check_done will always be run before this
+        self.stop_run_async()
+        self.wait_run_async() # check_done will always be run before this
         # check_done()
         return mask
         
@@ -162,20 +162,20 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         # The switch service works only if the simulation is running
         switched_on = not switch_on
         def check_done():
-            # This will be run at the end of the async freerun. Either if it times out
+            # This will be run at the end of the async run. Either if it times out
             # or if it completes (successfully or not)
             nonlocal switched_on
             # ggLog.info(f"callback: switched_on = {switched_on}")
             if switched_on != switch_on:
                 raise RuntimeError(f"Failed to switch control to {switch_on}.")
-        self.freerun_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
         # self._gazeboAdapter.unpauseSimulation()
         switched_on = super()._switch_control(switch_on, timeout_s=timeout_s)
         # ggLog.info(f"switch_control returned {switched_on}")
         # ggLog.info(f"switched_on = {switched_on}")
         # self._gazeboAdapter.pauseSimulation()
-        self.stop_freerun_async()
-        self.wait_freerun_async() # check_done will always be run before this
+        self.stop_run_async()
+        self.wait_run_async() # check_done will always be run before this
         # check_done()
         return switched_on
 

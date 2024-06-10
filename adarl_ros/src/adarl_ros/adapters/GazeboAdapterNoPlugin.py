@@ -242,7 +242,7 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
 
         """
         t0_ = self.getEnvTimeFromStartup()
-        self.freerun(self._stepLength_sec)
+        self.run(self._stepLength_sec)
         elapsed_time = self.getEnvTimeFromStartup() - t0_
         self._episodeCountedSimDuration += elapsed_time
         self._totalCountedSimDuration += elapsed_time
@@ -438,7 +438,7 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
             #     ggLog.info("Successfully set Linkstate for link "+modelName+"::"+linkName)
         return ret
 
-    def freerun(self, duration_sec : float):
+    def run(self, duration_sec : float):
         wasPaused = self.isPaused()
         if wasPaused:
             self.unpauseSimulation()
