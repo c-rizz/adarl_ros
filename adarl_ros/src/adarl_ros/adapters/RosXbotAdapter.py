@@ -314,7 +314,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         return ret
 
     @override
-    def setJointsImpedanceCommand(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]]) -> None:
+    def setJointsImpedanceCommand(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]], delay_sec : float = 0) -> None:
+        if delay_sec!=0.0:
+            raise NotImplementedError()
         # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
         jdi = self.get_joint_device_info(after_env_time=float("-inf"))
         if jdi is not None and jdi.mask == 0:
