@@ -51,7 +51,7 @@ def build_xbot_cfg(is_floating_base):
         urdf = rospy.get_param('/xbotcore/robot_description', default=None) # type: ignore
         if urdf is not None:
             break
-        if time.monotonic() - t0 > 30:
+        if time.monotonic() - t0 > 60:
             raise TimeoutError()
         time.sleep(0.2)
     srdf = rospy.get_param('/xbotcore/robot_description_semantic') # type: ignore
@@ -180,7 +180,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._joint_device_info_mutex = RLock()
         self._joint_device_info_cv = Condition(self._joint_device_info_mutex)
         self._last_joint_device_info : JointDeviceInfo | None = None
-        self._position_command_stiffness = 400.0
+        self._position_command_stiffness = 100.0
         self._position_command_damping = 50.0
         self._commanded_joint_positions : Dict[Tuple[str,str],Tuple[float,float,float]] = {}
         # joint trajectories are ndarrays listing waypoints of format (time, position, velocuty, acceleration)
@@ -528,7 +528,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def moveToJointPoseSync(self,   jointPositions : Dict[Tuple[str,str],float],
                                     velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None,
-                                    joint_position_tolerance : float = 0.01) -> None:
+                                    joint_position_tolerance : float = 0.01,
+                                    max_time_s : float = 60) -> None:
         self.clear_commands()
         if velocity_scaling is None:
             velocity_scaling = 1.0
@@ -551,6 +552,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             max_traj_duration = max(0,traj_duration)
         timeout_env = max_traj_duration*2
         timeout_wall = timeout_env*20
+        if max_traj_duration > max_time_s:
+            raise RuntimeError(f"Computed trajectory is excessively long, would last {max_traj_duration}s, max_time is set to {max_time_s}s. \n"
+                               f"Initial joint state was: {[(jn,ji.position.item(),ji.rate.item()) for jn,ji in js.items()]}\n"
+                               f"Target joint position was: {jointPositions}\n"
+                               f"Durations {[(jn,traj_tpva[-1][0]) for jn,traj_tpva in joint_trajs.items()]}\n"
+                               f"Raise it if it is actually ok.")
+        # print(f"joint_trajs max_v = {max([max(t[2]) for t in joint_trajs.values() ])}")
         self._setJointTrajectoryCommand(jointTrajectories_tpva = joint_trajs)
 
         # self.setJointsPositionCommand(jointPositions=jointPositions)

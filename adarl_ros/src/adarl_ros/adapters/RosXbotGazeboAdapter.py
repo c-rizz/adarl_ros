@@ -11,7 +11,7 @@ import rospkg
 import rospy
 import sensor_msgs.msg
 from adarl_ros.adapters.RosAdapter import RosAdapter
-from adarl.utils.utils import JointState, LinkState, RequestFailError, Pose, build_pose
+from adarl.utils.utils import JointState, LinkState, RequestFailError, Pose, build_pose, MoveFailError
 import numpy as np
 
 from xbot_interface import config_options as opt
@@ -223,7 +223,7 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         jointStates : Dict[Tuple[str,str],JointState]
             Keys are in the format (model_name, joint_name), the value is the joint state to enforce
         """
-        controlled_joints = {jn:js for jn,js in jointStates.items() if jn in self.get_controlled_joints()}
+        controlled_joints =   {jn:js for jn,js in jointStates.items() if jn in self.get_controlled_joints()}
         uncontrolled_joints = {jn:js for jn,js in jointStates.items() if jn not in self.get_controlled_joints()}
 
         self._gazeboAdapter.setJointsStateDirect(jointStates=uncontrolled_joints)
@@ -231,11 +231,17 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         prev_lims = self._gazeboAdapter.get_sim_joint_limits(list(uncontrolled_joints.keys()))
         self._gazeboAdapter.set_sim_joint_limits(joint_limits_minmax={jn:(js.position.item()-e, js.position.item()+e) for jn, js in uncontrolled_joints.items()})
 
-        super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in controlled_joints.items()},
-                                    velocity_scaling=1.0,
-                                    acceleration_scaling=1.0,
-                                    joint_position_tolerance=0.05)
-
+        # self.run(1.0)
+        retry = 5
+        for i in range(retry):
+            try:
+                super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in controlled_joints.items()},
+                                            velocity_scaling=1.0,
+                                            acceleration_scaling=1.0,
+                                            joint_position_tolerance=0.05)
+                break
+            except MoveFailError as e:
+                ggLog.warn(f"Failed to move to initial pose, will retry {retry-1} times. Exception: \n{e}")
         self._gazeboAdapter.set_sim_joint_limits(joint_limits_minmax=prev_lims)
 
         # # wasPaused = self._gazeboAdapter.isPaused()
