@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import os
 import time
 from threading import Lock
@@ -180,17 +181,28 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         return switched_on
 
     @override
-    def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
+    def getJointsState(self, requestedJoints : List[Tuple[str,str]] | None = None) -> Dict[Tuple[str,str],JointState] | th.Tensor:
+
+        if requestedJoints is None:
+            return_tensor=True
+            requestedJoints = self._jointsToObserve
+        else:
+            return_tensor = False
+
         # js = super().getJointsState(requestedJoints=requestedJoints)
         # return js
         try:
-            js = self._gazeboAdapter.getJointsState(requestedJoints=requestedJoints)
+            ret = self._gazeboAdapter.getJointsState(requestedJoints=requestedJoints)
         except RequestFailError as e:
             ggLog.warn(f"Failed to read joints from gazebo, using xbot/ros")
             missing_jonts = [jr for jr in requestedJoints if jr not in e.partialResult]
-            js = super().getJointsState(requestedJoints=missing_jonts)
-            js.update(e.partialResult)
-        return js
+            ret = super().getJointsState(requestedJoints=missing_jonts)
+            ret.update(e.partialResult)
+
+        if return_tensor:
+            return th.as_tensor([[ret[n].position,ret[n].rate,ret[n].effort] for n in self._jointsToObserve]).view(size=(len(self._jointsToObserve),3))
+        else:
+            return ret
 
 
     @override
@@ -223,8 +235,8 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         jointStates : Dict[Tuple[str,str],JointState]
             Keys are in the format (model_name, joint_name), the value is the joint state to enforce
         """
-        controlled_joints =   {jn:js for jn,js in jointStates.items() if jn in self.get_controlled_joints()}
-        uncontrolled_joints = {jn:js for jn,js in jointStates.items() if jn not in self.get_controlled_joints()}
+        xbot_controlled_joints =   {jn:js for jn,js in jointStates.items() if jn in self.get_xbot_controlled_joints()}
+        uncontrolled_joints = {jn:js for jn,js in jointStates.items() if jn not in self.get_impedance_controlled_joints()}
 
         self._gazeboAdapter.setJointsStateDirect(jointStates=uncontrolled_joints)
         e = 0.001
@@ -235,7 +247,7 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         retry = 5
         for i in range(retry):
             try:
-                super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in controlled_joints.items()},
+                super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in xbot_controlled_joints.items()},
                                             velocity_scaling=1.0,
                                             acceleration_scaling=1.0,
                                             joint_position_tolerance=0.05)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from threading import Lock
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Dict, List, Tuple, Union, Optional, Sequence, Mapping
 
 import adarl.utils.beep
 import adarl.utils.dbg.ggLog as ggLog
@@ -172,7 +172,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._model_name = model_name
         self._reference_frame = reference_frame
         self._torch_device = torch_device
-        self._commanded_joint_impedances_by_name : Dict[Tuple[str,str], Tuple[float,float,float,float,float]]= {}
+        self._commanded_joint_impedances_by_name : dict[tuple[str,str], Tuple[float,float,float,float,float] | th.Tensor]= {}
         self._joint_cmd_fallback_by_jid = {}
         self._fallback_cmd_stiffness = fallback_cmd_stiffness
         self._fallback_cmd_damping = fallback_cmd_damping
@@ -200,6 +200,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._jid_to_xbotjname : Dict[int, str]
         self._last_jdi_time = float("-inf")
         self._enable_filters = enable_filters
+        self._jimpedance_controlled_joints : list[tuple[str,str]] = []
 
 
     def _joint_device_info_callback(self, msg):
@@ -207,8 +208,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             self._last_jdi_time = self.getEnvTimeFromReset()
             self._last_joint_device_info = msg
 
+    @override
     def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
         self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
+        super().set_monitored_joints(jointsToObserve)
 
     def startup(self):
         super().startup()
@@ -228,8 +231,23 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {topic_name}")
 
-    def get_controlled_joints(self):
+    def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
+        """Get the names of the joint that XBot is controlling
+
+        Returns
+        -------
+        list[tuple[str,str]]
+            The list of the joints
+        """
         return [(self._model_name, xbot_jname) for xbot_jname in self._xbotjname_to_jid.keys()]
+
+    @override
+    def set_impedance_controlled_joints(self, joint_names : Sequence[Tuple[str,str]]):
+        self._jimpedance_controlled_joints = list(joint_names)
+
+    @override
+    def get_impedance_controlled_joints(self) -> list[tuple[str,str]]:
+        return self._jimpedance_controlled_joints
 
     def get_joint_device_info(self, after_env_time : float = float("-inf"), timeout_wall : float = 30.0) -> JointDeviceInfo | None:
         with self._joint_device_info_cv:
@@ -237,10 +255,16 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             ret = self._last_joint_device_info
         return ret
 
-    def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
+    @override
+    def getJointsState(self, requestedJoints : List[Tuple[str,str]] | None = None) -> Dict[Tuple[str,str],JointState] | th.Tensor:
         if not self._listenersStarted:
             raise RuntimeError("called getJointsState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_joints, and then call startController")
-        
+
+        if requestedJoints is None:
+            return_tensor=True
+            requestedJoints = self._jointsToObserve
+        else:
+            return_tensor = False
 
         self._robot_interface.sense(update_model=False)
 
@@ -257,7 +281,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         jeff = self._robot_interface.getJointEffort()
 
 
-        ret = {}
+        ret : dict[tuple[str,str], JointState]= {}
         for full_joint_name in requestedJoints:
             model, jname = full_joint_name
             if model != self._model_name:
@@ -269,9 +293,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         if self._torch_device.type == "cuda":
             # sync non_blocking cuda transfers
             th.cuda.synchronize(self._torch_device)
-        return ret
+        if return_tensor:
+            return th.as_tensor([[ret[n].position,ret[n].rate,ret[n].effort] for n in self._jointsToObserve]).view(size=(len(self._jointsToObserve),3))
+        else:
+            return ret
 
-
+    @override
     def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
         if not self._listenersStarted:
             raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_links, and then call startController")
@@ -314,14 +341,22 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         return ret
 
     @override
-    def setJointsImpedanceCommand(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]], delay_sec : float = 0) -> None:
+    def setJointsImpedanceCommand(self, joint_impedances_pvesd : Mapping[Tuple[str,str],Tuple[float,float,float,float,float]] | th.Tensor,
+                                        delay_sec : float = 0) -> None:
         if delay_sec!=0.0:
             raise NotImplementedError()
+        
+        if isinstance(joint_impedances_pvesd, th.Tensor):
+            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
+        elif isinstance(joint_impedances_pvesd, Mapping):
+            joint_impedances_pvesd_dict = joint_impedances_pvesd
+
+        
         # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
         jdi = self.get_joint_device_info(after_env_time=float("-inf"))
         if jdi is not None and jdi.mask == 0:
             ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
-        for full_jname, jcmd in joint_impedances_pvesd.items():
+        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
                 raise RuntimeError(f"Commanded joint impedance for model different from the controlled one (asked '{model_name, jname}', but have '{self._model_name}')")
@@ -331,7 +366,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self.apply_joint_impedances(self._commanded_joint_impedances_by_name)
 
     @override
-    def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]]):
+    def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor]):
         # ggLog.info(f"applying joint impedances {joint_impedances_pvesd}")
         if len (joint_impedances_pvesd)==0:
             return
