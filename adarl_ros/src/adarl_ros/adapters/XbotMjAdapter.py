@@ -1,498 +1,163 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-from typing import List, Tuple, Dict, Any, Optional, Sequence, overload
-
-import pybullet
+from typing import List, Tuple, Dict, Any, Optional, Sequence, Union, overload
 
 from adarl.utils.utils import JointState, LinkState, Pose, build_pose, buildQuaternion
-import adarl.utils.sigint_handler
-from adarl.adapters.BaseAdapter import BaseAdapter
-from adarl.adapters.BaseJointEffortAdapter import BaseJointEffortAdapter
 from adarl.adapters.BaseSimulationAdapter import BaseSimulationAdapter
-from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
-from adarl.adapters.BaseJointVelocityAdapter import BaseJointVelocityAdapter
-import numpy as np
 import adarl.utils.dbg.ggLog as ggLog
-import quaternion
-import xmltodict
 import adarl.utils.utils
-from pathlib import Path
+from adarl_ros.adapters.RosXbotAdapter import RosXbotAdapter
+
+from xbot2_mujoco.PyXbotMjSimEnv import XBotMjSimEnv
+from xbot2_mujoco.PyXbotMjSimEnv import LoadingUtils
+
+import numpy as np
+
 import time
-import threading
-import os
-import pkgutil
-egl = pkgutil.get_loader('eglRenderer')
-import pybullet_data
 import torch as th
 
-class XbotMjAdapter(BaseSimulationAdapter, BaseJointEffortAdapter, BaseJointPositionAdapter, BaseJointVelocityAdapter):
-    """This class allows to control the execution of a Mujoco+XBot2 simulation.
+class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
+    ):
+
+    """This class allows to control the execution of a Mujoco+XBot2 simulation and command the robot thorugh XBot2 ROS topic interface.
 
     """
 
-    def __init__(self):
+    def __init__(self,
+        model_name : str,
+        stepLength_sec : float,
+        forced_ros_master_uri : Union[str, None] = None,
+        maxObsDelay = float("+inf"),
+        blocking_observation = False,
+        is_floating_base : bool = True,
+        reference_frame : str = "world",
+        torch_device : th.device = th.device("cpu"),
+        fallback_cmd_stiffness : float = 200.0,
+        fallback_cmd_damping : float= 100.0,
+        allow_fallback : bool = True,
+        jpos_cmd_max_vel = {},
+        jpos_cmd_max_vel_default = 0.0,
+        jpos_cmd_max_acc = {},
+        jpos_cmd_max_acc_default = 0.0,
+        enable_filters = True):
+
         """Initialize the Simulator.
 
         """
-        super().__init__()
+        super().__init__(model_name=model_name,
+                        stepLength_sec=stepLength_sec,
+                        forced_ros_master_uri=forced_ros_master_uri,
+                        maxObsDelay=maxObsDelay,
+                        blocking_observation=blocking_observation,
+                        is_floating_base=is_floating_base,
+                        reference_frame=reference_frame,
+                        torch_device=torch_device,
+                        fallback_cmd_stiffness=fallback_cmd_stiffness,
+                        fallback_cmd_damping=fallback_cmd_damping,
+                        allow_fallback=allow_fallback,
+                        jpos_cmd_max_vel=jpos_cmd_max_vel,
+                        jpos_cmd_max_vel_default=jpos_cmd_max_vel_default,
+                        jpos_cmd_max_acc=jpos_cmd_max_acc,
+                        jpos_cmd_max_acc_default=jpos_cmd_max_acc_default,
+                        enable_filters=enable_filters)
         
-    def _refresh_entities_ids(self, print_info = False):
-        bodyIds = []
-        for i in range(pybullet.getNumBodies()):
-            bodyIds.append(pybullet.getBodyUniqueId(i))
-
-        self._bodyAndJointIdToJointName : dict[tuple[int,int], tuple[str,str]] = {}
-        self._jointNamesToBodyAndJointId : dict[tuple[str,str], tuple[int,int]] = {}
-        self._bodyLinkIds_to_linkName = {}
-        self._linkName_to_bodyLinkIds = {}
-        dynamics_infos = ["mass","lat_frict","loc_inertia_diag","loc_inertial_pos","loc_inertial_orn","restitution","roll_friction","spin_friction","contact_damping","contact_stiffness","body_type","collision_margin"]
-        for bodyId in bodyIds:
-            base_link_name, _ = pybullet.getBodyInfo(bodyId)
-            model_name = self._bodyId_to_modelName[bodyId]
-            base_link_name = (model_name, base_link_name.decode("utf-8"))
-            base_body_and_link_id = (bodyId, -1)
-            if print_info:
-                ggLog.info(f"Found base link {base_link_name}, with bodyid,link_id {base_body_and_link_id}")
-                ggLog.info(f"DynamicsInfo: {list(zip(dynamics_infos,pybullet.getDynamicsInfo(bodyId,-1)))}")
-            self._linkName_to_bodyLinkIds[base_link_name] = base_body_and_link_id
-            self._bodyLinkIds_to_linkName[base_body_and_link_id] = base_link_name
-            for jointId in range(pybullet.getNumJoints(bodyId)):
-                jointInfo = pybullet.getJointInfo(bodyId,jointId)
-                jointName = (model_name, jointInfo[1].decode("utf-8"))
-                linkName = (model_name, jointInfo[12].decode("utf-8"))
-                body_and_joint_ids = (bodyId,jointId)
-                self._bodyAndJointIdToJointName[body_and_joint_ids] = jointName
-                self._jointNamesToBodyAndJointId[jointName] = body_and_joint_ids
-                self._bodyLinkIds_to_linkName[body_and_joint_ids] = linkName
-                self._linkName_to_bodyLinkIds[linkName] = body_and_joint_ids
-                if print_info:
-                    ggLog.info(f"  Found regular link {linkName}, with bodyid,link_id/joint_id {body_and_joint_ids}")
-                    ggLog.info(f"    DynamicsInfo: {list(zip(dynamics_infos,pybullet.getDynamicsInfo(bodyId,jointId)))}")
-                    ggLog.info(f"    JointInfo of {jointName} : "+str(pybullet.getJointInfo(bodyId,jointId)))
-
-
-    def startup(self):
-        self._refresh_entities_ids()
-        self._simTime = 0
-
-    def set_monitored_joints(self, jointsToObserve: List[Tuple[str,str]]):
-        self._default_joint_state_requests = self._build_joint_state_requests(jointsToObserve)
-        req_joint_names = []
-        for body_id, joint_ids in self._default_joint_state_requests.items():
-            req_joint_names.extend([self._getJointName(body_id,jid) for jid in joint_ids])
-        self._default_joint_state_request_ordering = np.array([req_joint_names.index(jn) for jn in jointsToObserve])
-        return super().set_monitored_joints(jointsToObserve)
-
-    def _getJointName(self, bodyId, jointIndex):
-        jointName = self._bodyAndJointIdToJointName[(bodyId,jointIndex)]
-        return jointName
-
-    def _getBodyAndJointId(self, jointName : tuple[str,str]) -> tuple[int,int]:
-        return self._jointNamesToBodyAndJointId[jointName] # TODO: this ignores the model name, should use it
-
-    def _getLinkName(self, bodyId, linkIndex):
-        return self._bodyLinkIds_to_linkName[(bodyId,linkIndex)]
-
-    def _getBodyAndLinkId(self, linkName):
-        return self._linkName_to_bodyLinkIds[linkName]
-
-    def resetWorld(self):
-        # ggLog.info(f"Resetted")
-        self._refresh_entities_ids()
-        self._simTime = 0
-        super().resetWorld()
-
-    def step(self) -> float:
-        """Step simulation.
-
-        Parameters
-        ----------
-
-        Returns
-        -------
-        True
-
-
-        Raises
-        -------
-        ExceptionName
-            Why the exception is raised.
-
-        """
-
-        return True
-
-    def run(self, duration_sec: float):
-        tf0 = time.monotonic()
-
-        self._reset_detected_contacts()
-        #pybullet.setTimeStep(self._stepLength_sec) #This is here, but still, as stated in the pybulelt quickstart guide this should not be changed often
-        self._last_step_commanded_torques = []
-
-        # ggLog.info(f"PyBullet doing {duration_sec}/{self._bullet_stepLength_sec}={simsteps} steps")
-        stepping_wtime = 0
-        t0 = self._simTime
-        while self._simTime-t0 < duration_sec:
-            self._apply_controls()
-            wtps = time.monotonic()
-            pybullet.stepSimulation()
-            self._read_new_contacts()
-            stepping_wtime += time.monotonic()-wtps
-            self._simTime += self._bullet_stepLength_sec
-            if self._real_time_factor is not None and self._real_time_factor>0:
-                sleep_time = self._bullet_stepLength_sec - (time.monotonic()-self._prev_step_end_wall_time)
-                # print(f" sleep_time = {sleep_time}")
-                if sleep_time > 0:
-                    time.sleep(sleep_time*(1/self._real_time_factor))
-            self._prev_step_end_wall_time = time.monotonic()
-        self._stepping_wtime_since_build += stepping_wtime
-        self._stepping_stime_since_build += self._simTime - t0
-        self._run_time_since_build += time.monotonic()-tf0
-
-        self._last_step_commanded_torques_by_name = {}
-        for jn, t in self._last_step_commanded_torques:
-            # ggLog.info(f"self._last_step_commanded_torques: {jn}, {t}")
-            if jn not in self._last_step_commanded_torques_by_name:
-                self._last_step_commanded_torques_by_name[jn] = []
-            self._last_step_commanded_torques_by_name[jn].append(t)
-        # ggLog.info(f"self._last_step_commanded_torques_by_name: {self._last_step_commanded_torques_by_name}")
-        self._last_step_commanded_torques_by_name = {jn:sum(torque_list)/len(torque_list) for jn, torque_list in self._last_step_commanded_torques_by_name.items()}    
-        self._last_step_commanded_torques_by_name.update(self._commanded_torques_by_name) # direct torque commands override other applied torques
-        return self._simTime-t0
-
-    def _apply_controls(self):
-        self._apply_commanded_torques()
-        self._apply_commanded_velocities()
-        self._apply_commanded_positions()
-
-    def _apply_commanded_torques(self):
-        pass
-    def _apply_commanded_velocities(self):
-        pass
-    def _apply_commanded_positions(self):
-        pass
-
-    def setJointsEffortCommand(self, jointTorques : List[Tuple[Tuple[str,str],float]]) -> None:
-        #For each bodyId I submit a request for joint motor control
-        requests = {}
-        for joint_name, torque in jointTorques:
-            bodyId, jointId = self._getBodyAndJointId(joint_name)
-            if bodyId not in requests: #If we haven't created a request for this body yet
-                requests[bodyId] = ([],[])
-            requests[bodyId][0].append(jointId) #requested jont
-            requests[bodyId][1].append(torque) #requested torque
-        self._commanded_torques_by_name = {jn:t for jn,t in jointTorques}
-        self._commanded_torques_by_body = requests
-
-    def setJointsVelocityCommand(self, jointVelocities : List[Tuple[Tuple[str,str],float]]) -> None:
-        #For each bodyId I submit a request for joint motor control
-        requests : Dict[int, Tuple[List[int], List[float]]] = {}
-        for joint_name, velocity in jointVelocities:
-            bodyId, jointId = self._getBodyAndJointId(joint_name)
-            if bodyId not in requests: #If we haven't created a request for this body yet
-                requests[bodyId] = ([],[])
-            requests[bodyId][0].append(jointId) #requested jont
-            requests[bodyId][1].append(velocity) #requested velocity
-        # self._commanded_velocities_by_name = {jn:t for jn,t in jointVelocities}
-        self._commanded_velocities_by_body = requests
-
-    def setJointsPositionCommand(self,  jointPositions : Dict[Tuple[str,str],float],
-                                        velocity_scaling : float = 1.0,
-                                        acceleration_scaling : float = 1.0) -> None:
-        requests = {}
-        jointStates = self.getJointsState(requestedJoints=list(jointPositions.keys()))
-        t0 = self.getEnvTimeFromStartup()
-        for joint, req_position in jointPositions.items():
-            max_acceleration = min( self._max_joint_acceleration_pos_control,
-                                    self._max_joint_accelerations_pos_control.get(joint,float("+inf")))
-            max_velocity = min(self._max_joint_velocity_pos_control,
-                               self._max_joint_velocities_pos_control.get(joint,float("+inf")))
-            bodyId, jointId = self._getBodyAndJointId(joint)
-            if bodyId not in requests: #If we haven't created a request for this body yet
-                requests[bodyId] = []
-            p0 = jointStates[joint].position[0]
-            traj_tpva = self._build_trajectory(t0 = t0,
-                                               p0 = p0,
-                                               v0 = jointStates[joint].rate[0],
-                                               pf = req_position,
-                                               samples = 100,
-                                               max_vel = max_velocity*velocity_scaling,
-                                               max_acc = max_acceleration*acceleration_scaling)
-            requests[bodyId].append((jointId, traj_tpva))
-            # requests[bodyId][0].append(jointId) #requested joint
-            # requests[bodyId][1].append(req_position) #requested position
-            # requests[bodyId][2].append(0) #requested velocity
-            # requests[bodyId][3].append(max_torque*acceleration_scaling) # Scale with the acceleration, kinda the same... :)
-            # requests[bodyId][4].append(positionGain)
-            # requests[bodyId][5].append(velocityGain)
-            # np.set_printoptions(suppress=True, formatter={'float_kind':'{:f}'.format})
-            # ggLog.info(f"Built trajectory from {p0} to {req_position} for joint {joint} at t0={t0}:\n{traj_tpva}")
-
-        self._commanded_trajectories = requests
-
-    def moveToJointPoseSync(self,   jointPositions : Dict[Tuple[str,str],float],
-                                    velocity_scaling : float = 1.0,
-                                    acceleration_scaling : float = 1.0,
-                                    max_error : float = 0.001,
-                                    step_time : Optional[float] = 0.1,
-                                    wall_timeout_sec : float = 30,
-                                    sim_timeout_sec : float = 30) -> None:
-        if step_time is None:
-            step_time = self._stepLength_sec
-        joints = list(jointPositions.keys())
-        req_pos = np.array([jointPositions[k] for k in joints])
-        jstates = self.getJointsState(joints)
-        curr_pos = np.array([jstates[k].position[0] for k in joints])
-
-        t0_wall = time.monotonic()
-        t0_sim = self.getEnvTimeFromStartup()
-
-        self.setJointsPositionCommand(jointPositions=jointPositions,
-                                        velocity_scaling=velocity_scaling,
-                                        acceleration_scaling=acceleration_scaling)
-        while np.max(req_pos - curr_pos) > max_error:
-            self.run(duration_sec=step_time)
-            jstates = self.getJointsState(joints)
-            curr_pos = np.array([jstates[k].position[0] for k in joints])
-            wall_d = time.monotonic()-t0_wall
-            if wall_d > wall_timeout_sec:
-                raise TimeoutError(f"wall timeout: {wall_d} > {wall_timeout_sec}")
-            sim_d = time.monotonic()-t0_sim
-            if sim_d > sim_timeout_sec:
-                raise TimeoutError(f"sim tomeout: {sim_d} > {sim_timeout_sec}")
-
-    def _build_joint_state_requests(self, requestedJoints : Sequence[Tuple[str,str]]):
-        requests : dict[int,list[int]] = {} #for each body id we will have a list of joints
-        for jn in requestedJoints:
-            bodyId, jointId = self._getBodyAndJointId(jn)
-            if bodyId not in requests: #If we haven't created a request for this body yet
-                requests[bodyId] = []
-            requests[bodyId].append(jointId) #requested jont
-        return requests
-
-    @overload
-    def getJointsState(self, requestedJoints : Sequence[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
-        ...
-
-    @overload
-    def getJointsState(self, requestedJoints : None) -> th.Tensor:
-        ...
-
-    def getJointsState(self, requestedJoints : Sequence[Tuple[str,str]] | None = None) -> Dict[Tuple[str,str],JointState] | th.Tensor:
-        # We have to make a request per each bodyId, so we create a dict of requests (or use the dfault one)
-        if requestedJoints is None:
-            requests = self._default_joint_state_requests
-        else:
-            requests = self._build_joint_state_requests(requestedJoints)
-
-        responses = [pybullet.getJointStates(bodyId,jids) for bodyId, jids in requests.items()]
-        responses_pve = [np.array([[jr[0],jr[1],jr[3]] for jr in r]) for r in responses]
-        
-        if requestedJoints is None:
-            state_pve = np.concatenate(responses_pve,axis=0)
-            return th.as_tensor(state_pve[self._default_joint_state_request_ordering], dtype = th.float32)
-        else:
-            allStates = {}
-            pos = 0
-            for bodyId, jids in requests.items():
-                response = responses_pve[pos]
-                pos += 1
-                for i in range(len(jids)):
-                    jid = jids[i]
-                    joint_name = self._bodyAndJointIdToJointName[(bodyId,jid)]
-                    pos, vel, effort = response[i]
-                    # if the joint is commanded in torque the returned effort will be zero.
-                    # But the actual effort is by definition the comanded one
-                    if joint_name in self._last_step_commanded_torques_by_name:
-                        effort = self._last_step_commanded_torques_by_name[joint_name]
-                    allStates[self._getJointName(bodyId,jid)] = JointState([pos], [vel], [effort])
-            return allStates
-
     def setJointsStateDirect(self, jointStates : Dict[Tuple[str,str],JointState]):
-        requests_by_body = {} # one request per body
-        for jn, js in jointStates.items():
-            bodyId, jointId = self._getBodyAndJointId(jn)
-            if bodyId not in requests_by_body: #If we haven't created a request for this body yet
-                requests_by_body[bodyId] = []
-            requests_by_body[bodyId].append((jointId, js)) #requested jont
+        raise NotImplementedError()
 
-        for bodyId, reqs in requests_by_body.items():#for each bodyId make a request
-            ids = [r[0] for r in reqs]
-            states = [r[1] for r in reqs]
-            for s in states:
-                if len(s.position) > 1:
-                    raise NotImplementedError(f"Only 1-DOF joints are supported")
-                if len(s.rate) > 1:
-                    raise NotImplementedError(f"Only 1-DOF joints are supported")
-                if len(s.effort) != 0 and any([e!=0 for e in s.effort]):
-                    raise NotImplementedError(f"Direct effort setting is not supported, only zero effort setting is supported. Requested {s.effort}")
-            pybullet.resetJointStatesMultiDof(bodyId, ids, [s.position for s in states], [s.rate for s in states])
-        
-        # tolerance = 0.01
-        # jss = self.getJointsState(list(jointStates.keys()))
-        # ggLog.info(f"jss = {jss}")
-        # diff = {k:abs(v.position.item() - jointStates[k].position.item()) for k,v in jss.items()}
-        # if any([e>tolerance for e in diff.values()]):
-        #     ggLog.error(f"Failed to set joint position. Requested:\n"
-        #                 f"{jointStates}\n"
-        #                 f"Got:\n"
-        #                 f"{jss}\n"
-        #                 f"Error:\n"
-        #                 f"{diff}")
-            
-    def getLinksState(self, requestedLinks : List[Tuple[str,str]], use_com_frame : bool = False) -> Dict[Tuple[str,str],LinkState]:
-        # ggLog.info(f"Getting link states for {requestedLinks}")
-        #For each bodyId I submit a request for joint state
-        requests = {} #for each body id we will have a list of joints
-        baserequests = []
-        for ln in requestedLinks:
-            bodyId, linkId = self._getBodyAndLinkId(ln)
-            if linkId != -1:
-                if bodyId not in requests: #If we haven't created a request for this body yet
-                    requests[bodyId] = []
-                requests[bodyId].append(linkId) #requested jont
-            else:
-                baserequests.append(bodyId) #requested jont
+    def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
+        raise NotImplementedError()
 
-        allStates = {}
-        for bodyId in requests.keys():#for each bodyId make a request
-            bodyStates = pybullet.getLinkStates(bodyId,requests[bodyId],computeLinkVelocity=1, computeForwardKinematics=1)
-            for i in range(len(requests[bodyId])):#put the responses of this bodyId in allStates
-                #print("bodyStates["+str(i)+"] = "+str(bodyStates[i]))
-                linkId = requests[bodyId][i]
-                if use_com_frame:
-                    linkState = LinkState(  position_xyz =     bodyStates[i][0][:3],
-                                            orientation_xyzw = bodyStates[i][1][:4],
-                                            pos_velocity_xyz = bodyStates[i][6][:3],
-                                            ang_velocity_xyz = bodyStates[i][7][:3])
-                else:
-                    # raise NotImplementedError()
-                    linkState = LinkState(  position_xyz =     bodyStates[i][4][:3],
-                                            orientation_xyzw = bodyStates[i][5][:4],
-                                            pos_velocity_xyz = bodyStates[i][6][:3], # this is the com velocity!
-                                            ang_velocity_xyz = bodyStates[i][7][:3])
-                allStates[self._getLinkName(bodyId,linkId)] = linkState
-        for bodyId in baserequests: #for each bodyId make a request
-            # ggLog.info(f"Getting pose of body {bodyId}")
-            bodyPose = pybullet.getBasePositionAndOrientation(bodyId)
-            bodyVelocity = pybullet.getBaseVelocity(bodyId)
-            if use_com_frame:
-                linkState = LinkState(  position_xyz = bodyPose[0][:3],
-                                        orientation_xyzw = bodyPose[1][:4],
-                                        pos_velocity_xyz = bodyVelocity[0][:3],
-                                        ang_velocity_xyz = bodyVelocity[1][:3])
-            else:
-                # These are expressed in the center-of-mass frame, we need to convert them to use the urdf frame
-                local_inertia_pos, local_inertia_orient = pybullet.getDynamicsInfo(bodyId,-1)[3:5]
-                # pybullet.multiplyTransform
-                raise NotImplementedError()
-        
-            allStates[self._getLinkName(bodyId,-1)] = linkState
-
-        #print("returning "+str(allStates))
-        # ggLog.info(f"Got link states for {allStates.keys()}")
-
-        return allStates
-
-    def setLinksStateDirect(self, linksStates: Dict[Tuple[str, str], LinkState]):
-        requests = {}
-        for ln, ls in linksStates.items():
-            bodyId, linkId = self._getBodyAndLinkId(ln)
-            if bodyId not in requests: #If we haven't created a request for this body yet
-                requests[bodyId] = []
-            if linkId != -1: # could also check if the base joint is a free-floating one, and use the joint to move the first link
-                raise RuntimeError(f"Can only set pose for base links, but requested to move link {ln} (base link is {self._getLinkName(bodyId,-1)})")
-            requests[bodyId].append(ls)
-
-        for bodyId, states in requests.items():
-            for state in states:
-                pybullet.resetBasePositionAndOrientation(bodyId, state.pose.position, state.pose.orientation_xyzw)
-
-    def getEnvTimeFromStartup(self) -> float:
-        return self._simTime
-
-    def build_scenario(self, file_path = None, format = "urdf"):
-        pass
-
-    def destroy_scenario(self):
-        self._modelName_to_bodyId = {}
-
-    def spawn_model(self):
-        pass
-
-    def delete_model(self, model_name: str):
-        pass
+    def setupLight(self):
+        raise NotImplementedError()
     
-    def monitor_contacts(self, monitored_contacts : List[Tuple[Optional[str],
-                                                            Optional[str],
-                                                            Optional[Tuple[str,str]],
-                                                            Optional[Tuple[str,str]]]]):
-        self._monitored_contacts = monitored_contacts
-
-    def get_contacts(self) -> List[List[    Tuple[  Tuple[str,str],
-                                                    Tuple[str,str],
-                                                    Tuple[float,float,float],
-                                                    float,
-                                                    float]]]:
-        """Returns the list of the contact readings for all the simulation steps in the last env step.
-        """
-        return self._detected_contacts
-
-    def _reset_detected_contacts(self):
-        self._detected_contacts : List[List[Tuple[Tuple[str,str],
-                                                  Tuple[str,str],
-                                                  Tuple[float,float,float],
-                                                  float,
-                                                  float]]] = []
-
-    def _read_new_contacts(self):
-        new_contacts = []
-        for allowed_contacts in self._monitored_contacts:
-            contacts = self._get_contacts(*allowed_contacts)
-            new_contacts += contacts
-        self._detected_contacts.append(new_contacts)
-
-    def _get_contacts(self, 
-                     model_a : Optional[str],
-                     model_b : Optional[str],
-                     link_a : Optional[Tuple[str,str]],
-                     link_b : Optional[Tuple[str,str]]) -> List[Tuple[Tuple[str,str],Tuple[str,str],Tuple[float,float,float],float]]:
-        if model_b and not model_a:
-            raise ValueError(f"model_b should only be set if model_a is set")
-        if link_b and not (link_a or model_a):
-            raise ValueError(f"link_b should only be set if link_a or model_a are set")
-        if link_a and model_a:
-            raise ValueError(f"can only set one of model_a or link_a")
-        if link_b and model_b:
-            raise ValueError(f"can only set one of model_b or link_b")
-        link_a_id, link_b_id = None, None
-        if link_a:
-            model_a = link_a[0]
-            link_a_id = self._linkName_to_bodyLinkIds[link_a]
-        if link_b:
-            model_b = link_b[0]
-            link_b_id = self._linkName_to_bodyLinkIds[link_b]
-
-        body_a_id = self._modelName_to_bodyId[model_a] if model_a is not None else None
-        body_b_id = self._modelName_to_bodyId[model_b] if model_b is not None else None
-        # ggLog.info(f"bodyA = {body_a_id}, bodyB = {body_b_id}, linkIndexA = {link_a_id}, linkIndexB = {link_b_id}")
-        kwargs = {}
-        if body_a_id is not None: kwargs["bodyA"] = body_a_id
-        if body_b_id is not None: kwargs["bodyB"] = body_b_id
-        if link_a_id is not None: kwargs["linkIndexA"] = link_a_id
-        if link_b_id is not None: kwargs["linkIndexB"] = link_b_id
-        cpoints = pybullet.getContactPoints(**kwargs)
-        ret = []
-        for cp in cpoints:
-            link1 = self._bodyLinkIds_to_linkName[(cp[1], cp[3])]
-            link2 = self._bodyLinkIds_to_linkName[(cp[2], cp[4])]
-            normal_2to1_xyz = cp[7]
-            force = cp[9]
-            duration = self._bullet_stepLength_sec
-            ret.append((link1,
-                        link2,
-                        normal_2to1_xyz,
-                        force,
-                        duration))
-        return ret
-
+    def spawn_model(self,   
+        model_name : str,
+        model_definition_string : Optional[str] = None,
+        model_format : Optional[str] = None,
+        model_file : Optional[str] = None,
+        pose : Pose = build_pose(0,0,0,0,0,0,1),
+        model_kwargs : Dict[Any,Any] = {}) -> str:
+        raise NotImplementedError()
+    
+    def delete_model(self, model_name : str):
+        raise NotImplementedError()
+    
+    def getEnvTimeFromStartup(self) -> float:
+        raise NotImplementedError()
+    
+    def getEnvTimeFromReset(self) -> float:
+        raise NotImplementedError()
+    
+    def set_monitored_joints(self, jointsToObserve : List[Tuple[str,str]]):
+        raise NotImplementedError()
+    
+    def set_monitored_links(self, linksToObserve : List[Tuple[str,str]]):
+        raise NotImplementedError()
+    
+    def set_monitored_cameras(self, camerasToRender : List[str] = []):
+        raise NotImplementedError()
+    
+    def run(self, duration_sec : float):
+        raise NotImplementedError()
+    
+    def startup(self):
+        raise NotImplementedError()
+    
+    def resetWorld(self):
+        raise NotImplementedError()
+    
+    def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
+        raise NotImplementedError()
+    
+    def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
+        raise NotImplementedError()
+    
+    def getRenderings(self, requestedCameras : List[str]) -> Dict[str, Tuple[np.ndarray, float]]:
+        raise NotImplementedError()
+    
+    def setJointsStateDirect(self, jointStates : Dict[Tuple[str,str],JointState]):
+        raise NotImplementedError()
+    
+    def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
+        raise NotImplementedError()
+    
+    def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
+        mask = -1
+        def check_done():
+            # This will be run at the end of the async run. Either if it times out
+            # or if it completes (successfully or not)
+            nonlocal mask
+            # ggLog.info(f"callback: mask = {mask}")
+            if mask != control_mask:
+                raise RuntimeError(f"Failed to switch control to {mask}.")
+        self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        # self._gazeboAdapter.unpauseSimulation()
+        mask = super()._setup_joint_control(control_mask, timeout_s=timeout_s)
+        # ggLog.info(f"_setup_joint_control returned {control_mask}")
+        # ggLog.info(f"control_mask = {control_mask}")
+        # self._gazeboAdapter.pauseSimulation()
+        self.stop_run_async()
+        self.wait_run_async() # check_done will always be run before this
+        # check_done()
+        return mask 
+    
+    def _switch_control(self, switch_on: bool, timeout_s = 300.0) -> bool:
+        # The switch service works only if the simulation is running
+        switched_on = not switch_on
+        def check_done():
+            # This will be run at the end of the async run. Either if it times out
+            # or if it completes (successfully or not)
+            nonlocal switched_on
+            # ggLog.info(f"callback: switched_on = {switched_on}")
+            if switched_on != switch_on:
+                raise RuntimeError(f"Failed to switch control to {switch_on}.")
+        self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        # self._gazeboAdapter.unpauseSimulation()
+        switched_on = super()._switch_control(switch_on, timeout_s=timeout_s)
+        # ggLog.info(f"switch_control returned {switched_on}")
+        # ggLog.info(f"switched_on = {switched_on}")
+        # self._gazeboAdapter.pauseSimulation()
+        self.stop_run_async()
+        self.wait_run_async() # check_done will always be run before this
+        # check_done()
+        return switched_on
