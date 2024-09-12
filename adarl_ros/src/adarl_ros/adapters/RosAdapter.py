@@ -148,7 +148,7 @@ class RosAdapter(BaseAdapter):
         ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
 
         rospy.init_node('ros_env_controller', anonymous=True)
-        adarl.utils.sigint_handler.setupSigintHandler()
+        adarl.utils.sigint_handler.fix_sigint_handler()
 
         self._startup_env_time = rospy.get_time() #Will be overwritten by resetWorld
         self._last_step_end_env_time = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
