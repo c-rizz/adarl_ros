@@ -209,6 +209,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
         self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
+    
+    def fallback_striffness(self):
+        return self._fallback_cmd_stiffness
+    
+    def fallback_damping(self):
+        return self._fallback_cmd_damping
 
     def startup(self):
         super().startup()
@@ -227,6 +233,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         topic_name = "/xbotcore/joint_device_info"
         self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {topic_name}")
+
+        # preallocating cmds
+        self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._vrefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._erefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._pgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._vgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
 
     def get_controlled_joints(self):
         return [(self._model_name, xbot_jname) for xbot_jname in self._xbotjname_to_jid.keys()]
@@ -342,9 +355,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 raise RuntimeError(f"Commanded joint impedance for model different from the controleld one (asked '{model_name, jname}', but have '{self._model_name}')")
             jid = self._xbotjname_to_jid[jname]
             commanded_joint_impedances_by_jid[jid] = jcmd
-        
-        prefs, vrefs, erefs, pgains, vgains = (np.zeros(shape=(self._joints_num,), dtype=np.float64) 
-                                               for _ in range(5))
 
         curr_pos = self._robot_interface.getJointPosition()
         used_fallback = False
@@ -355,16 +365,16 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
                 # keeps current position
                 cmd = (curr_pos[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
-            prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
+            self._prefs[jid], self._vrefs[jid], self._erefs[jid], self._pgains[jid], self._vgains[jid] = cmd
         if used_fallback:
             ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
             ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd.items()]}")
 
-        self._robot_interface.setStiffness(pgains)
-        self._robot_interface.setDamping(vgains)
-        self._robot_interface.setPositionReference(prefs)
-        self._robot_interface.setVelocityReference(vrefs)
-        self._robot_interface.setEffortReference(erefs)
+        self._robot_interface.setStiffness(self._pgains)
+        self._robot_interface.setDamping(self._vgains)
+        self._robot_interface.setPositionReference(self._prefs)
+        self._robot_interface.setVelocityReference(self._vrefs)
+        self._robot_interface.setEffortReference(self._erefs)
         self._robot_interface.move()
         # ggLog.info(f"Sent robot_interface command")
 
