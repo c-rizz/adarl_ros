@@ -370,8 +370,14 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # ggLog.info(f"applying joint impedances {joint_impedances_pvesd}")
         if len (joint_impedances_pvesd)==0:
             return
+        
+        if isinstance(joint_impedances_pvesd, th.Tensor):
+            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
+        elif isinstance(joint_impedances_pvesd, Mapping):
+            joint_impedances_pvesd_dict = joint_impedances_pvesd
+
         commanded_joint_impedances_by_jid = {}
-        for full_jname, jcmd in joint_impedances_pvesd.items():
+        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
                 raise RuntimeError(f"Commanded joint impedance for model different from the controleld one (asked '{model_name, jname}', but have '{self._model_name}')")
@@ -393,7 +399,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
         if used_fallback:
             ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
-            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd.items()]}")
+            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
 
         self._robot_interface.setStiffness(pgains)
         self._robot_interface.setDamping(vgains)
