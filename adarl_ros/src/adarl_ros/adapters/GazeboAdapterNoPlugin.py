@@ -321,7 +321,7 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
             if resp.success:
                 linkState = LinkState(  position_xyz = (resp.link_state.pose.position.x, resp.link_state.pose.position.y, resp.link_state.pose.position.z),
                                         orientation_xyzw = (resp.link_state.pose.orientation.x, resp.link_state.pose.orientation.y, resp.link_state.pose.orientation.z, resp.link_state.pose.orientation.w),
-                                        pos_velocity_xyz = (resp.link_state.twist.linear.x, resp.link_state.twist.linear.y, resp.link_state.twist.linear.z),
+                                        pos_com_velocity_xyz = (resp.link_state.twist.linear.x, resp.link_state.twist.linear.y, resp.link_state.twist.linear.z),
                                         ang_velocity_xyz = (resp.link_state.twist.angular.x, resp.link_state.twist.angular.y, resp.link_state.twist.angular.z))
 
                 gottenLinks[link] = linkState

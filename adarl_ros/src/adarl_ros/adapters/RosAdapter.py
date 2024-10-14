@@ -341,7 +341,7 @@ class RosAdapter(BaseAdapter):
                             twist = lsMsg.twist
                             ls = LinkState( position_xyz     = (pose.position.x, pose.position.y, pose.position.z),
                                                 orientation_xyzw = (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w),
-                                                pos_velocity_xyz = (twist.linear.x, twist.linear.y, twist.linear.z),
+                                                pos_com_velocity_xyz = (twist.linear.x, twist.linear.y, twist.linear.z),
                                                 ang_velocity_xyz = (twist.angular.x, twist.angular.y, twist.angular.z))
                             vs = [ls.pose.position, ls.pose.orientation, ls.pos_velocity_xyz, ls.ang_velocity_xyz]
                             if np.any([np.any(np.isnan(v)) for v in vs]) or not np.all([np.all(np.isfinite(v)) for v in vs]):

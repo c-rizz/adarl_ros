@@ -254,7 +254,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
 
             linkState = LinkState(  position_xyz = (linkInfo.pose.position.x, linkInfo.pose.position.y, linkInfo.pose.position.z),
                                     orientation_xyzw = (linkInfo.pose.orientation.x, linkInfo.pose.orientation.y, linkInfo.pose.orientation.z, linkInfo.pose.orientation.w),
-                                    pos_velocity_xyz = (linkInfo.twist.linear.x, linkInfo.twist.linear.y, linkInfo.twist.linear.z),
+                                    pos_com_velocity_xyz = (linkInfo.twist.linear.x, linkInfo.twist.linear.y, linkInfo.twist.linear.z),
                                     ang_velocity_xyz = (linkInfo.twist.angular.x, linkInfo.twist.angular.y, linkInfo.twist.angular.z))
             ret[rl] = linkState
         return ret
