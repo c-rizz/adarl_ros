@@ -9,7 +9,6 @@ import adarl.utils.utils
 from adarl_ros.adapters.RosXbotAdapter import RosXbotAdapter
 
 from xbot2_mujoco.PyXbotMjSimEnv import XBotMjSimEnv
-from xbot2_mujoco.PyXbotMjSimEnv import LoadingUtils
 
 import numpy as np
 
@@ -18,7 +17,7 @@ import torch as th
 import rospy
 import os
 
-class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
+class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     ):
 
     """This class allows to control the execution of a Mujoco+XBot2 simulation and command the robot thorugh XBot2 ROS topic interface.
@@ -28,6 +27,7 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
     def __init__(self,
         model_fpath: str,
         model_name : str,
+        stepLength_sec : float,
         xbot2_config_path: str = None,
         headless: bool = False,
         init_steps: int = 0,
@@ -58,12 +58,15 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
         self._closed=False
 
         self._xmj_sim_env=None
-        self._loader_helper = LoadingUtils(model_name)
-
-        self._init_simulation() # after this, all data from sim is available
-        # for reading
-
-        stepLength_sec=self._xmj_env.physics_dt#
+        self._abs_sim_timer=0
+        self._sim_time=0
+        sim_ok=self._init_simulation() # after this, all data from sim is available
+        if not sim_ok:
+            ggLog.error(f"{__class__}: Simulation failed to initialize!!")
+        
+        if stepLength_sec==self._xmj_env.physics_dt != 0:
+            ggLog.error(f"{__class__}: stepLength_sec {self._stepLength_sec} is not equal to {self._xmj_env.physics_dt} (physics dt)")
+        
         super().__init__(model_name=model_name,
                         stepLength_sec=stepLength_sec,
                         forced_ros_master_uri=forced_ros_master_uri,
@@ -80,19 +83,6 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
                         jpos_cmd_max_acc=jpos_cmd_max_acc,
                         jpos_cmd_max_acc_default=jpos_cmd_max_acc_default,
                         enable_filters=enable_filters)
-    
-    def _init_simulation(self):
-        self._xmj_env = XBotMjSimEnv(
-            model_fname=self._model_fpath,
-            xbot2_config_path=self._xbot2_config_path,
-            headless=self._headless,
-            manual_stepping=True,
-            init_steps=self._init_steps,
-            timeout=self._timeout_ms # [ms]
-        )
-        self._abs_sim_timer=0
-        self._xmj_env_jnt_names=self._xmj_env.jnt_names()
-        self._xmk_evn_n_dofs=self._xmj_env.n_jnts()
 
     def __del__(self):
         self._close()
@@ -112,6 +102,39 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
     def setupLight(self):
         raise NotImplementedError()
     
+    def _init_simulation(self):
+        self._xmj_env = XBotMjSimEnv(
+            model_fname=self._model_fpath,
+            xbot2_config_path=self._xbot2_config_path,
+            headless=self._headless,
+            manual_stepping=True,
+            init_steps=self._init_steps,
+            timeout=self._timeout_ms # [ms]
+        )
+
+        pi=np.zeros((3))
+        qi=np.zeros((4))
+        qi[0] = 1
+        pi[2]=self._xmj_env.get_pi()[2]
+        self._xmj_env.set_pi(pi)
+        self._xmj_env.set_qi(qi)
+        reset_ok=self._xmj_env.reset()
+
+        if reset_ok:
+            for i in range(0, self._init_steps):
+                if not self._xmj_env.step(): 
+                    return False
+        else:
+            return False
+        
+        self._xmj_env_jnt_names=self._xmj_env.jnt_names()
+        self._xmk_evn_n_dofs=self._xmj_env.n_jnts()
+        
+        return True
+
+    def build_scenario(self, file_path = None, format = "urdf"):
+        pass
+
     def spawn_model(self,   
         model_name : str,
         model_definition_string : Optional[str] = None,
@@ -129,7 +152,7 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
         return self._abs_sim_timer
     
     def getEnvTimeFromReset(self) -> float:
-        return self._xmj_env.physics_dt*self._xmj_env.step_counter
+        return self._sim_time
     
     def set_monitored_joints(self, jointsToObserve : List[Tuple[str,str]]):
         super().set_monitored_joints(jointsToObserve=jointsToObserve)
@@ -143,15 +166,22 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
     def run(self, duration_sec : float):
         self._apply_controls()
         while self.getEnvTimeFromReset()<duration_sec:
-            self.step()
+            time_stepped=self.step()
+            if time_stepped==0.0:
+                return
+    
+    def step(self) -> float:
+        # always step on a _xmj_env environment dt
+        step_ok=self._xmj_env.step()
+        if not step_ok:
+            return 0.0
+        self._sim_time+=self._stepLength_sec
+        return self._stepLength_sec
     
     def startup(self):
         super().startup()
         rospy.loginfo("ROS time is "+str(rospy.get_time())+" pid = "+str(os.getpid()))
         self.resetWorld()
-
-    def step(self):
-        self._xmj_env.step()
 
     def xmj_env(self):
         return self._xmj_env
@@ -171,6 +201,7 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
             raise RuntimeError(f"Failed to switch on control.")
         
         self._xmj_env.reset()
+        self._sim_time=0
 
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
         mask = -1
@@ -262,4 +293,7 @@ class XbotMjAdapter(BaseSimulationAdapter, RosXbotAdapter
                                     joint_position_tolerance=0.05)
 
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
+        raise NotImplementedError()
+    
+    def get_joints_state_step_stats(self):
         raise NotImplementedError()
