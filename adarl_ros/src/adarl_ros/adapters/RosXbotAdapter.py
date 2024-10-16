@@ -71,7 +71,7 @@ def build_xbot_cfg(is_floating_base):
 
 def get_link_names(robot):
     urdf = URDF.from_xml_string(robot.getUrdfString())
-    print(urdf.links)
+    # print(urdf.links)
     lnames = [l.name for l in urdf.links]
     return lnames
 
@@ -224,6 +224,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
         self._robot_interface = xbot.RobotInterface(cfg)
+    
         ggLog.info(get_system_recap_string(self._robot_interface))
         set_filters(True)
         self._setup_joint_control(control_mask=255)
@@ -232,7 +233,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._joints_num = len(enabled_joint_names)
         self._xbotjname_to_jid = {jname : enabled_joint_names.index(jname) for jname in enabled_joint_names}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
-
+        
         topic_name = "/xbotcore/joint_device_info"
         self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {topic_name}")
