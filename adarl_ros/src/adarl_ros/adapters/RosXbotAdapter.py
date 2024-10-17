@@ -513,7 +513,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         t0 = time.monotonic()
         switched_on = not switch_on
-        print(switched_on)
         status = None
         while switched_on != switch_on:
             if time.monotonic()-t0>timeout_s:
@@ -525,11 +524,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 ggLog.warn(f"ros_ctrl_state call failed: {e}")
                 raise e
             status = resp.status
-            print("AAAAAAAAAAAAAAA")
-            print(resp.status)
-            print()
             switched_on = resp.status == "Running"
-            print(switched_on)
             # ggLog.info(f"ros_control state: {resp}")
             if switched_on != switch_on:
                 try:

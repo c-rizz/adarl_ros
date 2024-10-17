@@ -180,7 +180,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def startup(self):
         super().startup()
         rospy.loginfo("ROS time is "+str(rospy.get_time())+" pid = "+str(os.getpid()))
-        exit()
         self.resetWorld()
 
     def xmj_env(self):
@@ -196,8 +195,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         mask = self._setup_joint_control(control_mask = req_mask)
         if mask != req_mask:
             raise RuntimeError(f"Failed to set control mask, wanted {req_mask}, got {mask}")
-        print("AAAAAAAAA")
-        exit()
         switched_on = self._switch_control(True, timeout_s = 300.0)
         if not switched_on:
             raise RuntimeError(f"Failed to switch on control.")
@@ -236,10 +233,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             nonlocal switched_on
             if switched_on != switch_on:
                 raise RuntimeError(f"Failed to switch control to {switch_on}.")
-        self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        self.run_async(on_finish_callback=check_done)
         switched_on = super()._switch_control(switch_on, timeout_s=timeout_s)
         self.stop_run_async()
-        self.wait_run_async() # check_done will always be run before this
+        self.wait_run_async(timeout_sec = timeout_s) # check_done will always be run before this
         # check_done()
         return switched_on
 
