@@ -89,7 +89,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
 
     def _close(self):
         if not self._closed:
-            if self._xmj_env.is_running():
+            if self._xmj_env is not None:
                 self._xmj_env.close()
             self._closed=True
 
@@ -166,21 +166,21 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def run(self, duration_sec : float):
         self._apply_controls()
         while self.getEnvTimeFromReset()<duration_sec:
-            time_stepped=self.step()
-            if time_stepped==0.0:
+            step_ok=self._xmj_env.step()
+            if not step_ok:
                 return
+            self._sim_time+=self._stepLength_sec
     
     def step(self) -> float:
         # always step on a _xmj_env environment dt
-        step_ok=self._xmj_env.step()
-        if not step_ok:
-            return 0.0
-        self._sim_time+=self._stepLength_sec
-        return self._stepLength_sec
+        stime_before=self._sim_time
+        self.run(duration_sec=self._stepLength_sec)
+        return self._sim_time-stime_before
     
     def startup(self):
         super().startup()
         rospy.loginfo("ROS time is "+str(rospy.get_time())+" pid = "+str(os.getpid()))
+        exit()
         self.resetWorld()
 
     def xmj_env(self):
@@ -196,11 +196,15 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         mask = self._setup_joint_control(control_mask = req_mask)
         if mask != req_mask:
             raise RuntimeError(f"Failed to set control mask, wanted {req_mask}, got {mask}")
+        print("AAAAAAAAA")
+        exit()
         switched_on = self._switch_control(True, timeout_s = 300.0)
         if not switched_on:
             raise RuntimeError(f"Failed to switch on control.")
+        reset_ok=self._xmj_env.reset()
+        if not reset_ok:
+            raise RuntimeError(f"Sim env reset failed!")
         
-        self._xmj_env.reset()
         self._sim_time=0
 
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
@@ -209,13 +213,19 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             # This will be run at the end of the async run. Either if it times out
             # or if it completes (successfully or not)
             nonlocal mask
+            # ggLog.info(f"callback: mask = {mask}")
             if mask != control_mask:
                 raise RuntimeError(f"Failed to switch control to {mask}.")
         self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        # self._gazeboAdapter.unpauseSimulation()
+        mask = super()._setup_joint_control(control_mask, timeout_s=timeout_s)
+        # ggLog.info(f"_setup_joint_control returned {control_mask}")
+        # ggLog.info(f"control_mask = {control_mask}")
+        # self._gazeboAdapter.pauseSimulation()
         self.stop_run_async()
-        self.wait_run_async() # check_done will always be run before this
+        self.wait_run_async(timeout_sec=60) # check_done will always be run before this
         # check_done()
-        return mask 
+        return mask
     
     def _switch_control(self, switch_on: bool, timeout_s = 300.0) -> bool:
         # The switch service works only if the simulation is running

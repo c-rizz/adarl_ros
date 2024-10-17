@@ -47,14 +47,20 @@ def build_xbot_cfg(is_floating_base):
     A function to construct the xbotinterface config object from ros
     """
     t0 = time.monotonic()
+    timeout=30
+    retry_freq=1.5
+    robot_description_name='/xbotcore/robot_description'
+    semantic_description_name='/xbotcore/robot_description_semantic'
     while True:
-        urdf = rospy.get_param('/xbotcore/robot_description', default=None) # type: ignore
+        urdf = rospy.get_param(robot_description_name, default=None) # type: ignore
         if urdf is not None:
             break
-        if time.monotonic() - t0 > 60:
+        if time.monotonic() - t0 > timeout: # retry for max timeout secs
             raise TimeoutError()
-        time.sleep(0.2)
-    srdf = rospy.get_param('/xbotcore/robot_description_semantic') # type: ignore
+        time.sleep(retry_freq)
+        ggLog.warn(f"build_xbot_cfg: could not get robot description parameter at \"{robot_description_name}\"! Trying again...")
+
+    srdf = rospy.get_param(semantic_description_name) # type: ignore
     if not isinstance(urdf, str):
         raise RuntimeError(f"URDF is not a string, it's a {type(urdf)}")
     if not isinstance(srdf, str):
@@ -95,8 +101,6 @@ def get_system_recap_string(robot):
         ret += f"\n{n}: {q} vs {qref}"
     return ret
 
-
-
 def set_filters(set_enabled : bool, required_filter_hz = 20.0):
     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
     rospy.wait_for_service(enable_filter_srv_name)
@@ -123,9 +127,6 @@ def set_filters(set_enabled : bool, required_filter_hz = 20.0):
             if not resp.success:
                 raise RuntimeError(f"Failed to set filters status: {resp}")
     ggLog.info(f"Filters {'enabled' if filter_status else 'disabled'}. Cutoff = {filter_hz}")
-
-
-
 
 def is_simulated():
     # Is here some better way to do this?
@@ -221,11 +222,25 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     def startup(self):
         super().startup()
-
         cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
-        self._robot_interface = xbot.RobotInterface(cfg)
-    
+
+        import time
+        wait_for_sec=1.5 # [s]
+        timeout_sec=60.0
+        t0 = time.monotonic()
+        while True:
+            try:
+                self._robot_interface = xbot.RobotInterface(cfg)
+                if self._robot_interface is not None:
+                    break
+            except RuntimeError:
+                ggLog.error(f"{__class__}: Failed to initialized robot interface (is xbot-core running?)! Will try again in {wait_for_sec} s...")
+                time.sleep(wait_for_sec)
+                if time.monotonic()-t0>timeout_sec:
+                    break
+
         ggLog.info(get_system_recap_string(self._robot_interface))
+
         set_filters(True)
         self._setup_joint_control(control_mask=255)
         self._switch_control(self._enable_filters)
@@ -498,6 +513,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         t0 = time.monotonic()
         switched_on = not switch_on
+        print(switched_on)
         status = None
         while switched_on != switch_on:
             if time.monotonic()-t0>timeout_s:
@@ -509,7 +525,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 ggLog.warn(f"ros_ctrl_state call failed: {e}")
                 raise e
             status = resp.status
+            print("AAAAAAAAAAAAAAA")
+            print(resp.status)
+            print()
             switched_on = resp.status == "Running"
+            print(switched_on)
             # ggLog.info(f"ros_control state: {resp}")
             if switched_on != switch_on:
                 try:
