@@ -16,6 +16,7 @@ import time
 import torch as th
 import rospy
 import os
+from typing_extensions import override
 
 class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     ):
@@ -64,9 +65,11 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         if not sim_ok:
             ggLog.error(f"{__class__}: Simulation failed to initialize!!")
         
-        if stepLength_sec==self._xmj_env.physics_dt != 0:
-            ggLog.error(f"{__class__}: stepLength_sec {self._stepLength_sec} is not equal to {self._xmj_env.physics_dt} (physics dt)")
+        if not stepLength_sec==self._xmj_env.physics_dt:
+            ggLog.error(f"{__class__}: stepLength_sec {stepLength_sec} is not equal to {self._xmj_env.physics_dt} (physics dt)")
         
+        self._jimpedance_controlled_joints : list[tuple[str,str]] = []
+
         super().__init__(model_name=model_name,
                         stepLength_sec=stepLength_sec,
                         forced_ros_master_uri=forced_ros_master_uri,
@@ -83,6 +86,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                         jpos_cmd_max_acc=jpos_cmd_max_acc,
                         jpos_cmd_max_acc_default=jpos_cmd_max_acc_default,
                         enable_filters=enable_filters)
+
+        joints_to_observe = [(model_name, joint) for joint in self._xmj_env_jnt_names]
+        self.set_monitored_joints(joints_to_observe)
+        self.set_monitored_links([])
 
     def __del__(self):
         self._close()
@@ -102,6 +109,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def setupLight(self):
         raise NotImplementedError()
     
+    def sim_is_running(self):
+        return self._xmj_env.is_running()
+
     def _init_simulation(self):
         self._xmj_env = XBotMjSimEnv(
             model_fname=self._model_fpath,
@@ -154,18 +164,31 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def getEnvTimeFromReset(self) -> float:
         return self._sim_time
     
-    def set_monitored_joints(self, jointsToObserve : List[Tuple[str,str]]):
-        super().set_monitored_joints(jointsToObserve=jointsToObserve)
-    
     def set_monitored_links(self, linksToObserve : List[Tuple[str,str]]):
         super().set_monitored_links(linksToObserve=linksToObserve)
     
     def set_monitored_cameras(self, camerasToRender : List[str] = []):
         super().set_monitored_cameras(camerasToRender=camerasToRender)
     
+    @override
+    def set_impedance_controlled_joints(self, joint_names : Sequence[Tuple[str,str]]):
+        self._jimpedance_controlled_joints = list(joint_names)
+        self._monitored_to_controlled_idxs = th.as_tensor([self._monitored_joints.index(jn) for jn in self._jimpedance_controlled_joints])
+
+    @override
+    def set_monitored_joints(self, jointsToObserve: Sequence[tuple[str, str]]):
+        ret = super().set_monitored_joints(jointsToObserve=jointsToObserve)
+        self._monitored_to_controlled_idxs = th.as_tensor([self._monitored_joints.index(jn) for jn in self._jimpedance_controlled_joints], dtype = th.long)
+        return ret
+    
+    @override
+    def clear_commands(self):
+        super().clear_commands()
+        self._commanded_joint_impedances : dict[float, dict] = {}
+
     def run(self, duration_sec : float):
-        self._apply_controls()
-        while self.getEnvTimeFromReset()<duration_sec:
+        stime_before=self.getEnvTimeFromReset()
+        while self.getEnvTimeFromReset()-stime_before<duration_sec:
             step_ok=self._xmj_env.step()
             if not step_ok:
                 return
@@ -213,7 +236,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             # ggLog.info(f"callback: mask = {mask}")
             if mask != control_mask:
                 raise RuntimeError(f"Failed to switch control to {mask}.")
-        self.run_async(duration_sec=timeout_s, on_finish_callback=check_done)
+        self.run_async(on_finish_callback=check_done)
         # self._gazeboAdapter.unpauseSimulation()
         mask = super()._setup_joint_control(control_mask, timeout_s=timeout_s)
         # ggLog.info(f"_setup_joint_control returned {control_mask}")
