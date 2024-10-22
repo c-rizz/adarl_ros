@@ -122,14 +122,15 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             timeout=self._timeout_ms # [ms]
         )
 
+        reset_ok=self._xmj_env.reset()
+
         pi=np.zeros((3))
         qi=np.zeros((4))
         qi[0] = 1
-        pi[2]=self._xmj_env.get_pi()[2]
+        pi[2]=self._xmj_env.p[2]
         self._xmj_env.set_pi(pi)
         self._xmj_env.set_qi(qi)
-        reset_ok=self._xmj_env.reset()
-
+        
         if reset_ok:
             for i in range(0, self._init_steps):
                 if not self._xmj_env.step(): 
@@ -137,6 +138,12 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         else:
             return False
         
+        pi[2]= self._xmj_env.p[2] # uise pz after init tsteps as
+        # # initial spawning height
+        self._xmj_env.set_pi(pi)
+        reset_ok=self._xmj_env.reset()
+        if not reset_ok:
+            return False
         self._xmj_env_jnt_names=self._xmj_env.jnt_names()
         self._xmk_evn_n_dofs=self._xmj_env.n_jnts()
         
