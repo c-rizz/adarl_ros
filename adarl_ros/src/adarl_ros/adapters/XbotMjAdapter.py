@@ -63,11 +63,15 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self._sim_time=0
         sim_ok=self._init_simulation() # after this, all data from sim is available
         if not sim_ok:
-            ggLog.error(f"{__class__}: Simulation failed to initialize!!")
-        
-        if not stepLength_sec==self._xmj_env.physics_dt:
-            ggLog.error(f"{__class__}: stepLength_sec {stepLength_sec} is not equal to {self._xmj_env.physics_dt} (physics dt)")
-        
+            msg="Failed to initialize simulation!!"
+            ggLog.error(f"{__class__}: {msg}")
+            raise RuntimeError(msg)
+
+        if not (stepLength_sec==self._xmj_env.physics_dt):
+            msg=f"stepLength_sec {stepLength_sec} is not equal to {self._xmj_env.physics_dt} (physics dt)"
+            ggLog.error(f"{__class__}: {msg}")
+            raise ValueError(msg)
+
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
 
         super().__init__(model_name=model_name,
@@ -194,8 +198,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self._commanded_joint_impedances : dict[float, dict] = {}
 
     def run(self, duration_sec : float):
-        stime_before=self.getEnvTimeFromReset()
-        while self.getEnvTimeFromReset()-stime_before<duration_sec:
+
+        n_sim_steps_to_do=round(duration_sec/self._xmj_env.physics_dt)
+        for i in range(n_sim_steps_to_do):
             step_ok=self._xmj_env.step()
             if not step_ok:
                 return
