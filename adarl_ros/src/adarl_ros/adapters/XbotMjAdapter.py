@@ -196,9 +196,12 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def clear_commands(self):
         super().clear_commands()
         self._commanded_joint_impedances : dict[float, dict] = {}
-
+    
+    @override
     def run(self, duration_sec : float):
-
+        
+        self._apply_controls()
+        
         n_sim_steps_to_do=round(duration_sec/self._xmj_env.physics_dt)
         for i in range(n_sim_steps_to_do):
             step_ok=self._xmj_env.step()
@@ -206,12 +209,13 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                 msg=f"Failed to step XMj simulation!"
                 ggLog.error(f"{__class__}: {msg}")
                 raise ValueError(msg)
-            self._sim_time+=self._stepLength_sec
+            self._sim_time+=self._xmj_env.physics_dt
     
     def step(self) -> float:
         # always step on a _xmj_env environment dt
         stime_before=self._sim_time
         self.run(duration_sec=self._stepLength_sec)
+        self.clear_commands()
         return self._sim_time-stime_before
     
     def startup(self):
@@ -332,9 +336,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         uncontrolled_joints = {jn:js for jn,js in jointStates.items() if jn not in self.get_controlled_joints()}
 
         super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in controlled_joints.items()},
-                                    velocity_scaling=1.0,
-                                    acceleration_scaling=1.0,
-                                    joint_position_tolerance=0.05)
+            velocity_scaling=1.0,
+            acceleration_scaling=1.0,
+            joint_position_tolerance=0.05)
 
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
         raise NotImplementedError()
