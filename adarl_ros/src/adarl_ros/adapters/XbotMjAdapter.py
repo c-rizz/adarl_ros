@@ -203,7 +203,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         for i in range(n_sim_steps_to_do):
             step_ok=self._xmj_env.step()
             if not step_ok:
-                return
+                msg=f"Failed to step XMj simulation!"
+                ggLog.error(f"{__class__}: {msg}")
+                raise ValueError(msg)
             self._sim_time+=self._stepLength_sec
     
     def step(self) -> float:
