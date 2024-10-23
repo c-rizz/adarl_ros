@@ -193,11 +193,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         return ret
     
     @override
-    def clear_commands(self):
-        super().clear_commands()
-        self._commanded_joint_impedances : dict[float, dict] = {}
-    
-    @override
     def run(self, duration_sec : float):
         
         self._apply_controls()
@@ -215,7 +210,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         # always step on a _xmj_env environment dt
         stime_before=self._sim_time
         self.run(duration_sec=self._stepLength_sec)
-        self.clear_commands()
+        # self.clear_commands()
         return self._sim_time-stime_before
     
     def startup(self):
@@ -227,22 +222,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         return self._xmj_env
     
     def resetWorld(self):
-        super(RosXbotAdapter, self).resetWorld()
-        self.clear_commands()
-
-        self._last_jdi_time = -1
-        self._last_joint_device_info = None
-        req_mask = 255
-        mask = self._setup_joint_control(control_mask = req_mask)
-        if mask != req_mask:
-            raise RuntimeError(f"Failed to set control mask, wanted {req_mask}, got {mask}")
-        switched_on = self._switch_control(True, timeout_s = 300.0)
-        if not switched_on:
-            raise RuntimeError(f"Failed to switch on control.")
         reset_ok=self._xmj_env.reset()
-        if not reset_ok:
-            raise RuntimeError(f"Sim env reset failed!")
-        
+        super().resetWorld()
         self._sim_time=0
 
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
@@ -281,25 +262,11 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         # check_done()
         return switched_on
 
-    def getJointsState(self, requestedJoints : List[Tuple[str,str]]) -> Dict[Tuple[str,str],JointState]:
+    @override
+    def getJointsState(self, 
+            requestedJoints : List[Tuple[str,str]] | None = None) -> Dict[Tuple[str,str],JointState] | th.Tensor:
         
-        jnts_q=self._xmj_env.jnts_q
-        jnts_v=self._xmj_env.jnts_v
-        jnts_a=self._xmj_env.jnts_a
-        jnts_eff=self._xmj_env.jnts_eff
-
-        ret = {}
-        for rj in requestedJoints:
-            jnt_idx=-1
-            try:
-                jnt_idx=self._xmj_env_jnt_names.index(rj)    
-            except:
-                ggLog.info(f"Joint {rj} not found in available joint. Cannot read state.")
-                continue        
-            jointState = JointState(list(jnts_q[jnt_idx]),
-                                    list(jnts_v[jnt_idx]),
-                                    list(jnts_eff[jnt_idx]))
-            ret[rj] = jointState
+        ret=super().getJointsState(requestedJoints=requestedJoints)
 
         return ret
 
@@ -336,9 +303,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         uncontrolled_joints = {jn:js for jn,js in jointStates.items() if jn not in self.get_controlled_joints()}
 
         super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in controlled_joints.items()},
-            velocity_scaling=1.0,
-            acceleration_scaling=1.0,
-            joint_position_tolerance=0.05)
+                                velocity_scaling=1.0,
+                                acceleration_scaling=1.0,
+                                joint_position_tolerance=0.05)
 
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
         raise NotImplementedError()
