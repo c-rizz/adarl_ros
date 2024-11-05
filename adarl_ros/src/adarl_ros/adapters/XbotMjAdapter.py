@@ -224,6 +224,14 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def resetWorld(self):
         reset_ok=self._xmj_env.reset()
         super().resetWorld()
+        n_reset_steps=100
+        for i in range(n_reset_steps):
+            step_ok=self._xmj_env.step()
+            if not step_ok:
+                msg=f"Failed to step XMj simulation!"
+                ggLog.error(f"{__class__}: {msg}")
+                raise ValueError(msg)
+            
         self._sim_time=0
 
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
