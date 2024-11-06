@@ -20,8 +20,9 @@ from xbot_interface import xbot_interface as xbot
 from urdf_parser_py.urdf import URDF
 
 from std_srvs.srv import SetBool
-from xbot_msgs.srv import PluginStatus, SetControlMask
+from xbot_msgs.srv import PluginStatus, SetControlMask, GetStringList
 from xbot_msgs.msg import JointDeviceInfo
+
 import torch as th
 from adarl.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
 from typing_extensions import override
@@ -131,23 +132,17 @@ def set_filters(set_enabled : bool, required_filter_hz = 20.0):
 def is_simulated():
     # Is here some better way to do this?
     # Can I ask xbot?
-    topic_names = [t[0] for t in rospy.get_published_topics()]
-    if "/gazebo/link_states" in topic_names:
-        return True
-    else:
-        return False
-
-
-
-
-
-
-
-
-
-
-
-
+    switch_srv_name = "/xbotcore/get_parameter_value"
+    hw_type_param_name="/xbot/hal/hw_type"
+    rospy.wait_for_service(switch_srv_name)
+    enable_filter_srv = rospy.ServiceProxy(switch_srv_name, GetStringList)
+    res=enable_filter_srv(hw_type_param_name)
+    if not res.success:
+        raise RuntimeError(f"Failed to get hw type parameter from XBot!")
+    
+    hw_type=res.response[0]
+    
+    return hw_type=="sim"
 
 
 class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAdapter):
