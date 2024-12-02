@@ -102,22 +102,24 @@ def get_system_recap_string(robot):
         ret += f"\n{n}: {q} vs {qref}"
     return ret
 
-def set_filters(set_enabled : bool, required_filter_hz = 20.0):
+def set_filters(set_enabled : bool, required_filter_hz = 2.0):
     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
     rospy.wait_for_service(enable_filter_srv_name)
     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
-    set_filter_srv_name = "/xbotcore/set_filter_profile_fast"
+    set_filter_srv_name = "/xbotcore/set_filter_profile_medium"
     rospy.wait_for_service(set_filter_srv_name)
     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
     filter_status = not set_enabled
     filter_hz = None
     while filter_status != set_enabled and filter_hz!=required_filter_hz:
+        
         topic_name = "/xbotcore/joint_device_info"
         jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
         if not isinstance(jdi, JointDeviceInfo):
             raise RuntimeError(f"Unexpected type received from {topic_name}, should be JointDeviceInfo but it's {type(jdi)}")
         filter_status = jdi.filter_active
         filter_hz = jdi.filter_cutoff_hz
+
         if filter_hz != required_filter_hz:
             resp = set_filter_mode_srv() # this service always returns success = False
             # if not resp.success: 
@@ -254,6 +256,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._erefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._pgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._vgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+
+    def set_filters(self, set_enabled : bool, required_filter_hz = 20.0):
+        set_filters(set_enabled=set_enabled,required_filter_hz=required_filter_hz)
 
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
