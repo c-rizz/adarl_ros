@@ -22,6 +22,7 @@ from urdf_parser_py.urdf import URDF
 from std_srvs.srv import SetBool
 from xbot_msgs.srv import PluginStatus, SetControlMask, GetStringList
 from xbot_msgs.msg import JointDeviceInfo
+from sensor_msgs.msg import Imu
 
 import torch as th
 from adarl.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
@@ -235,6 +236,26 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             self._last_jdi_time = self.getEnvTimeFromReset()
             self._last_joint_device_info = msg
 
+    def _imu_device_callback(self, msg):
+
+        self._imu_frame = msg.header.frame_id
+
+        orientation = msg.orientation
+        self._imu_q_last[:, 0]=-orientation.w # - is a ACROCCHIO magico
+        self._imu_q_last[:, 1]=orientation.x
+        self._imu_q_last[:, 2]=orientation.y
+        self._imu_q_last[:, 3]=orientation.z
+
+        omega=msg.angular_velocity
+        self._imu_omega_last[:, 0]=omega.x
+        self._imu_omega_last[:, 1]=omega.y
+        self._imu_omega_last[:, 2]=omega.z
+
+        lin_acc=omega=msg.angular_velocity
+        self._imu_linacc_last[:, 0]=lin_acc.x
+        self._imu_linacc_last[:, 1]=lin_acc.y
+        self._imu_linacc_last[:, 2]=lin_acc.z
+
     @override
     def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
         self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
@@ -279,6 +300,14 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {topic_name}")
 
+        imu_topic_name = "/xbotcore/imu/imu_link"
+        self._imu_frame="none"
+        self._imu_q_last=np.zeros((1, 4))
+        self._imu_q_last[:, 0]=1.0
+        self._imu_omega_last=np.zeros((1, 3))
+        self._imu_linacc_last=np.zeros((1, 3))
+        self._imu_subscriber = rospy.Subscriber(imu_topic_name, Imu, self._imu_device_callback, queue_size=1)
+        
         # preallocating cmds
         self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._vrefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
@@ -288,7 +317,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     def set_filters(self, set_enabled : bool, profile_name = "safe"):
         set_filters(set_enabled=set_enabled,profile_name=profile_name)
-
+    
+    def get_imu_data(self):
+        return (self._imu_frame, self._imu_q_last, self._imu_omega_last, self._imu_linacc_last)
+    
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
 
