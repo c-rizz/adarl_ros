@@ -102,17 +102,50 @@ def get_system_recap_string(robot):
         ret += f"\n{n}: {q} vs {qref}"
     return ret
 
-def set_filters(set_enabled : bool, required_filter_hz = 2.0):
+# def set_filters(set_enabled : bool, required_filter_hz = 2.0):
+#     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
+#     rospy.wait_for_service(enable_filter_srv_name)
+#     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
+#     set_filter_srv_name = "/xbotcore/set_filter_profile_medium"
+#     rospy.wait_for_service(set_filter_srv_name)
+#     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
+#     filter_status = not set_enabled
+#     filter_hz = None
+#     while filter_status != set_enabled and filter_hz!=required_filter_hz:
+        
+#         topic_name = "/xbotcore/joint_device_info"
+#         jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
+#         if not isinstance(jdi, JointDeviceInfo):
+#             raise RuntimeError(f"Unexpected type received from {topic_name}, should be JointDeviceInfo but it's {type(jdi)}")
+#         filter_status = jdi.filter_active
+#         filter_hz = jdi.filter_cutoff_hz
+
+#         if filter_hz != required_filter_hz:
+#             resp = set_filter_mode_srv() # this service always returns success = False
+#             # if not resp.success: 
+#             #     raise RuntimeError(f"Failed to set filter cutoff. Status: {resp}")
+#         if filter_status != set_enabled:
+#             # print(("Enabling" if set_enabled else "Disabling")+" filters...")
+#             resp = enable_filter_srv(set_enabled)
+#             if not resp.success:
+#                 raise RuntimeError(f"Failed to set filters status: {resp}")
+#     ggLog.info(f"Filters {'enabled' if filter_status else 'disabled'}. Cutoff = {filter_hz}")
+
+def set_filters(set_enabled : bool, profile_name = "safe"):
     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
     rospy.wait_for_service(enable_filter_srv_name)
     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
-    set_filter_srv_name = "/xbotcore/set_filter_profile_medium"
+    set_filter_srv_name = f"/xbotcore/set_filter_profile_{profile_name}"
     rospy.wait_for_service(set_filter_srv_name)
     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
     filter_status = not set_enabled
     filter_hz = None
-    while filter_status != set_enabled and filter_hz!=required_filter_hz:
+    while filter_status != set_enabled:
         
+        resp = set_filter_mode_srv() # this service always returns success = False
+        # if not resp.success: 
+        #     raise RuntimeError(f"Failed to set filter cutoff. Status: {resp}")
+
         topic_name = "/xbotcore/joint_device_info"
         jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
         if not isinstance(jdi, JointDeviceInfo):
@@ -120,10 +153,6 @@ def set_filters(set_enabled : bool, required_filter_hz = 2.0):
         filter_status = jdi.filter_active
         filter_hz = jdi.filter_cutoff_hz
 
-        if filter_hz != required_filter_hz:
-            resp = set_filter_mode_srv() # this service always returns success = False
-            # if not resp.success: 
-            #     raise RuntimeError(f"Failed to set filter cutoff. Status: {resp}")
         if filter_status != set_enabled:
             # print(("Enabling" if set_enabled else "Disabling")+" filters...")
             resp = enable_filter_srv(set_enabled)
@@ -238,7 +267,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         ggLog.info(get_system_recap_string(self._robot_interface))
 
-        set_filters(True)
+        set_filters(True, profile_name="safe")
         self._setup_joint_control(control_mask=255)
         self._switch_control(self._enable_filters)
         enabled_joint_names = self._robot_interface.getEnabledJointNames() # this is different from robot.model().getEnabledJointNames()
@@ -257,8 +286,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._pgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._vgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
 
-    def set_filters(self, set_enabled : bool, required_filter_hz = 20.0):
-        set_filters(set_enabled=set_enabled,required_filter_hz=required_filter_hz)
+    def set_filters(self, set_enabled : bool, profile_name = "safe"):
+        set_filters(set_enabled=set_enabled,profile_name=profile_name)
 
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
