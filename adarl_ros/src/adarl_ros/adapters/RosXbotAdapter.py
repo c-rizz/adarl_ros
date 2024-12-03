@@ -188,7 +188,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         reference_frame : str = "world",
                         torch_device : th.device = th.device("cpu"),
                         fallback_cmd_stiffness : float = 200.0,
-                        fallback_cmd_damping : float= 100.0,
+                        fallback_cmd_damping : float= 60.0,
                         allow_fallback : bool = True,
                         jpos_cmd_max_vel = {},
                         jpos_cmd_max_vel_default = 0.0,
@@ -320,6 +320,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     
     def get_imu_data(self):
         return (self._imu_frame, self._imu_q_last, self._imu_omega_last, self._imu_linacc_last)
+    
+    def robot_interface(self):
+        return self.robot_interface
     
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
@@ -715,5 +718,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 self.clear_commands()
                 raise MoveFailError(f"Timed out waiting for sync joint move (wall timeout {elapsed_wall_time}>{timeout_wall}) errors = {errors} tolerance = {joint_position_tolerance}")
 
-
+    def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
+        raise NotImplementedError()
+    
+    def get_joints_state_step_stats(self):
+        raise NotImplementedError()
 
