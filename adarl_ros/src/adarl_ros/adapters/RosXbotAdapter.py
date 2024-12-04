@@ -21,7 +21,7 @@ from urdf_parser_py.urdf import URDF
 
 from std_srvs.srv import SetBool
 from xbot_msgs.srv import PluginStatus, SetControlMask, GetStringList
-from xbot_msgs.msg import JointDeviceInfo
+from xbot_msgs.msg import JointDeviceInfo, Statistics2
 from sensor_msgs.msg import Imu
 
 import torch as th
@@ -230,12 +230,14 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
 
-
     def _joint_device_info_callback(self, msg):
         with self._joint_device_info_mutex:
             self._last_jdi_time = self.getEnvTimeFromReset()
             self._last_joint_device_info = msg
-
+    
+    def _xbot_statistics_callback(self, msg):
+        self._xbot_task_stats=msg.task_stats
+        
     def _imu_device_callback(self, msg):
 
         self._imu_frame = msg.header.frame_id
@@ -288,17 +290,33 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         ggLog.info(get_system_recap_string(self._robot_interface))
 
+        self._ros_control_running=False
+        statistics_topicname="/xbotcore/statistics"
+        self._xbot_statistics_subscriber = rospy.Subscriber(statistics_topicname, Statistics2, 
+            self._xbot_statistics_callback, queue_size=1)
+        self._xbot_task_stats=None
+        while self._xbot_task_stats is None: # wait for first xbot stat
+            # msg to arrive to retrive task order
+            time.sleep(1.0)
+        self._xbot_task_info_map={}
+        for i in range(len(self._xbot_task_stats)):
+            task_info=self._xbot_task_stats[i]
+            self._xbot_task_info_map[task_info.name]=i
+        ggLog.info(f"Subscribed to {statistics_topicname}")
+
         set_filters(True, profile_name="safe")
         self._setup_joint_control(control_mask=255)
         self._switch_control(self._enable_filters)
+
         enabled_joint_names = self._robot_interface.getEnabledJointNames() # this is different from robot.model().getEnabledJointNames()
         self._joints_num = len(enabled_joint_names)
         self._xbotjname_to_jid = {jname : enabled_joint_names.index(jname) for jname in enabled_joint_names}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
         
-        topic_name = "/xbotcore/joint_device_info"
-        self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
-        ggLog.info(f"Subscribed to {topic_name}")
+        joint_dev_topicname="/xbotcore/joint_device_info"
+        self._jdi_subscriber = rospy.Subscriber(joint_dev_topicname, JointDeviceInfo, 
+            self._joint_device_info_callback, queue_size=1)
+        ggLog.info(f"Subscribed to {joint_dev_topicname}")
 
         imu_topic_name = "/xbotcore/imu/imu_link"
         self._imu_frame="none"
@@ -321,8 +339,52 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def get_imu_data(self):
         return (self._imu_frame, self._imu_q_last, self._imu_omega_last, self._imu_linacc_last)
     
-    def robot_interface(self):
-        return self.robot_interface
+    def _is_xbot_task_running(self,task_name: str):
+        task_id=self._xbot_task_info_map[task_name]
+        return self._xbot_task_stats[task_id].state=="Running"
+
+    def trigger_homing(self):
+        homing_switch_srv_name = "/xbotcore/homing/switch"
+        homing_state_srv_name = "/xbotcore/homing/state"
+        timeout_s= float("+inf")
+        # rospy.wait_for_service(homing_switch_srv_name, timeout=timeout_s)
+        homing_ros_switch = rospy.ServiceProxy(homing_switch_srv_name, SetBool)
+        ggLog.info(f"Created service proxy for {homing_switch_srv_name}")
+
+        # rospy.wait_for_service(homing_state_srv_name, timeout=timeout_s)
+        homing_ros_state = rospy.ServiceProxy(homing_state_srv_name, PluginStatus)
+        ggLog.info(f"Created service proxy for {homing_state_srv_name}")
+
+        t0 = time.monotonic()
+        homing_running=True
+        status = None
+        while homing_running:
+            if time.monotonic()-t0>timeout_s:
+                raise TimeoutError(f"Timed out waiting for homing to be completed switch. Status = '{status}'")
+            try:
+                # ggLog.info(f"Calling {state_srv_name}")
+                resp = homing_ros_state()
+            except rospy.ServiceException as e:
+                ggLog.warn(f"homing_ros_state call failed: {e}")
+                raise e
+            status = resp.status
+            homing_running = resp.status == "Running"
+            # ggLog.info(f"ros_control state: {resp}")
+            if not homing_running:
+                try:
+                    resp = homing_ros_switch(True) # DOES NOT WORK IF THE SIMULATION IS PAUSED. A sadly, services have no timeouts (https://github.com/ros/ros_comm/pull/2144)
+                except rospy.ServiceException as e:
+                    ggLog.info(f"homing_ros_switch call failed: {e}")
+                    raise e
+                # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
+            time.sleep(0.5)
+        ggLog.info(f"homing performed with response: {resp}")
+
+    def is_ros_control_running(self):
+        return self._is_xbot_task_running("ros_control")
+
+    def get_robot_interface(self):
+        return self._robot_interface
     
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
@@ -568,12 +630,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # ggLog.info(f"switch_xbotros_control({switch_on})")
         switch_srv_name = "/xbotcore/ros_control/switch"
         state_srv_name = "/xbotcore/ros_control/state"
-        rospy.wait_for_service(switch_srv_name, timeout = timeout_s)
+        # rospy.wait_for_service(switch_srv_name, timeout = timeout_s)
         ros_ctrl_switch = rospy.ServiceProxy(switch_srv_name, SetBool)
-        # ggLog.info(f"Created service proxy for {switch_srv_name}")
-        rospy.wait_for_service(state_srv_name, timeout = timeout_s)
+        ggLog.info(f"Created service proxy for {switch_srv_name}")
+        # rospy.wait_for_service(state_srv_name, timeout = timeout_s)
         ros_ctrl_state = rospy.ServiceProxy(state_srv_name, PluginStatus)
-        # ggLog.info(f"Created service proxy for {state_srv_name}")
+        ggLog.info(f"Created service proxy for {state_srv_name}")
 
         t0 = time.monotonic()
         switched_on = not switch_on
