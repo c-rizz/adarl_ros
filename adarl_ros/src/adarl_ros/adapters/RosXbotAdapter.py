@@ -241,7 +241,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._imu_frame = msg.header.frame_id
 
         orientation = msg.orientation
-        self._imu_q_last[:, 0]=-orientation.w # - is a ACROCCHIO magico
+        self._imu_q_last[:, 0]=orientation.w 
         self._imu_q_last[:, 1]=orientation.x
         self._imu_q_last[:, 2]=orientation.y
         self._imu_q_last[:, 3]=orientation.z
