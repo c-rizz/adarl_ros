@@ -8,7 +8,7 @@ import adarl.utils.dbg.ggLog as ggLog
 import adarl.utils.utils
 from adarl_ros.adapters.RosXbotAdapter import RosXbotAdapter
 
-from xbot2_mujoco.PyXbotMjSimEnv import XBotMjSim
+from xbot2_mujoco.PyXbotMjSim import XBotMjSim
 
 import numpy as np
 
