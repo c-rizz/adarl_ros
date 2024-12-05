@@ -8,7 +8,7 @@ import adarl.utils.dbg.ggLog as ggLog
 import adarl.utils.utils
 from adarl_ros.adapters.RosXbotAdapter import RosXbotAdapter
 
-from xbot2_mujoco.PyXbotMjSimEnv import XBotMjSimEnv
+from xbot2_mujoco.PyXbotMjSimEnv import XBotMjSim
 
 import numpy as np
 
@@ -58,7 +58,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self._timeout_ms=timeout_ms
         self._closed=False
 
-        self._xmj_sim_env=None
+        self._xmj_sim=None
         self._abs_sim_timer=0
         self._sim_time=0
         sim_ok=self._init_simulation() # after this, all data from sim is available
@@ -67,8 +67,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             ggLog.error(f"{__class__}: {msg}")
             raise RuntimeError(msg)
 
-        if not (stepLength_sec==self._xmj_env.physics_dt):
-            msg=f"stepLength_sec {stepLength_sec} is not equal to {self._xmj_env.physics_dt} (physics dt)"
+        if not (stepLength_sec==self._xmj_sim.physics_dt):
+            msg=f"stepLength_sec {stepLength_sec} is not equal to {self._xmj_sim.physics_dt} (physics dt)"
             ggLog.error(f"{__class__}: {msg}")
             raise ValueError(msg)
 
@@ -91,7 +91,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                         jpos_cmd_max_acc_default=jpos_cmd_max_acc_default,
                         enable_filters=enable_filters)
 
-        joints_to_observe = [(model_name, joint) for joint in self._xmj_env_jnt_names]
+        joints_to_observe = [(model_name, joint) for joint in self._xmj_sim_jnt_names]
         self.set_monitored_joints(joints_to_observe)
         self.set_monitored_links([])
 
@@ -100,8 +100,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
 
     def _close(self):
         if not self._closed:
-            if self._xmj_env is not None:
-                self._xmj_env.close()
+            if self._xmj_sim is not None:
+                self._xmj_sim.close()
             self._closed=True
 
     def setJointsStateDirect(self, jointStates : Dict[Tuple[str,str],JointState]):
@@ -114,10 +114,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         raise NotImplementedError()
     
     def sim_is_running(self):
-        return self._xmj_env.is_running()
+        return self._xmj_sim.is_running()
 
     def _init_simulation(self):
-        self._xmj_env = XBotMjSimEnv(
+        self._xmj_sim = XBotMjSim(
             model_fname=self._model_fpath,
             xbot2_config_path=self._xbot2_config_path,
             headless=self._headless,
@@ -126,30 +126,30 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             timeout=self._timeout_ms # [ms]
         )
 
-        reset_ok=self._xmj_env.reset()
+        reset_ok=self._xmj_sim.reset()
 
         pi=np.zeros((3))
         qi=np.zeros((4))
         qi[0] = 1
-        pi[2]=self._xmj_env.p[2]
-        self._xmj_env.set_pi(pi)
-        self._xmj_env.set_qi(qi)
+        pi[2]=self._xmj_sim.p[2]
+        self._xmj_sim.set_pi(pi)
+        self._xmj_sim.set_qi(qi)
         
         if reset_ok:
             for i in range(0, self._init_steps):
-                if not self._xmj_env.step(): 
+                if not self._xmj_sim.step(): 
                     return False
         else:
             return False
         
-        pi[2]= self._xmj_env.p[2] # uise pz after init tsteps as
+        pi[2]= self._xmj_sim.p[2] # uise pz after init tsteps as
         # # initial spawning height
-        self._xmj_env.set_pi(pi)
-        reset_ok=self._xmj_env.reset()
+        self._xmj_sim.set_pi(pi)
+        reset_ok=self._xmj_sim.reset()
         if not reset_ok:
             return False
-        self._xmj_env_jnt_names=self._xmj_env.jnt_names()
-        self._xmk_evn_n_dofs=self._xmj_env.n_jnts()
+        self._xmj_sim_jnt_names=self._xmj_sim.jnt_names()
+        self._xmk_evn_n_dofs=self._xmj_sim.n_jnts()
         
         return True
 
@@ -197,14 +197,14 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         
         self._apply_controls()
         
-        n_sim_steps_to_do=round(duration_sec/self._xmj_env.physics_dt)
+        n_sim_steps_to_do=round(duration_sec/self._xmj_sim.physics_dt)
         for i in range(n_sim_steps_to_do):
-            step_ok=self._xmj_env.step()
+            step_ok=self._xmj_sim.step()
             if not step_ok:
                 msg=f"Failed to step XMj simulation!"
                 ggLog.error(f"{__class__}: {msg}")
                 raise ValueError(msg)
-            self._sim_time+=self._xmj_env.physics_dt
+            self._sim_time+=self._xmj_sim.physics_dt
     
     def step(self) -> float:
         # always step on a _xmj_env environment dt
@@ -219,10 +219,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self.resetWorld()
 
     def xmj_env(self):
-        return self._xmj_env
+        return self._xmj_sim
     
     def resetWorld(self):
-        reset_ok=self._xmj_env.reset()
+        reset_ok=self._xmj_sim.reset()
         super().resetWorld()
         self._sim_time=0
 
@@ -271,20 +271,20 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         return ret
 
     def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
-        self._xmj_env.p
-        self._xmj_env.q
-        self._xmj_env.twist
-        self._xmj_env.jnts_q
+        self._xmj_sim.p
+        self._xmj_sim.q
+        self._xmj_sim.twist
+        self._xmj_sim.jnts_q
 
         ret = {}
         for rl in requestedLinks:
             if not (("base_link" in rl) or ("root_link" in rl)):
                 ggLog.info(f"getLinksState currently supports reading base link state only!")
             else:
-                linkState = LinkState(position_xyz = (self._xmj_env.p[0], self._xmj_env.p[1], self._xmj_env.p[2]),
-                    orientation_xyzw = (self._xmj_env.q[1], self._xmj_env.q[2], self._xmj_env.q[3], self._xmj_env.q[0]),
-                    pos_velocity_xyz = (self._xmj_env.twist[0], self._xmj_env.twist[1]. self._xmj_env.twist[2]),
-                    ang_velocity_xyz = (self._xmj_env.twist[3], self._xmj_env.twist[4], self._xmj_env.twist[5]))
+                linkState = LinkState(position_xyz = (self._xmj_sim.p[0], self._xmj_sim.p[1], self._xmj_sim.p[2]),
+                    orientation_xyzw = (self._xmj_sim.q[1], self._xmj_sim.q[2], self._xmj_sim.q[3], self._xmj_sim.q[0]),
+                    pos_velocity_xyz = (self._xmj_sim.twist[0], self._xmj_sim.twist[1]. self._xmj_sim.twist[2]),
+                    ang_velocity_xyz = (self._xmj_sim.twist[3], self._xmj_sim.twist[4], self._xmj_sim.twist[5]))
                 ret[rl] = linkState
         return ret
     
