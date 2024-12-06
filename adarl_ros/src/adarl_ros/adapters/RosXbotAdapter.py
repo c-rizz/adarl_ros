@@ -358,6 +358,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         t0 = time.monotonic()
         homing_running=True
         status = None
+        self._switch_control(switch_on=False) # deactivate ros control to
+        # avoid race conditions on the joints
         while homing_running:
             if time.monotonic()-t0>timeout_s:
                 raise TimeoutError(f"Timed out waiting for homing to be completed switch. Status = '{status}'")
@@ -379,6 +381,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
             time.sleep(0.5)
         ggLog.info(f"homing performed with response: {resp}")
+        self._switch_control(switch_on=True) # we can reactivate ros control
 
     def is_ros_control_running(self):
         return self._is_xbot_task_running("ros_control")
