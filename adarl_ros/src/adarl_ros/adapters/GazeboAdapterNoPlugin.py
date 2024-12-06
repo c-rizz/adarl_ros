@@ -24,6 +24,7 @@ import rospkg
 import adarl.utils
 import adarl.utils.utils
 from adarl.adapters.BaseAdapter import JointName, LinkName
+from pathlib import Path
 
 class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAdapter):
     """This class allows to control the execution of a Gazebo simulation.
@@ -470,32 +471,38 @@ class GazeboAdapterNoPlugin(RosAdapter, BaseJointEffortAdapter, BaseSimulationAd
                     pose : Pose,
                     model_kwargs : Dict[Any,Any] = {},
                     model_format = None,
-                    model_definition_string : Optional[str] = None):
-        if isinstance(model_file, str):
-            path = model_file
-        elif isinstance(model_file, tuple):        
-            path = rospkg.RosPack().get_path(model_file[0])+model_file[1]
-        else:
-            raise AttributeError("model_definition should be either a tuple (pkg, path) or a string (path)")
-
-        if model_format is None and model_file is not None:
-            filename_split = path.split(".")
-            ext = filename_split[-1]
-            if ext == "urdf":
-                model_format = "urdf"
-            elif ext == "sdf":
-                model_format = "sdf"
-            elif ext == "xacro":
-                ext = filename_split[-2]
+                    model_definition_string : Optional[str] = None):        
+        
+        if model_file is not None:
+            if isinstance(model_file, str):
+                path = model_file
+            elif isinstance(model_file, tuple):        
+                path = rospkg.RosPack().get_path(model_file[0])+model_file[1]
+            else:
+                raise AttributeError("model_definition should be either a tuple (pkg, path) or a string (path)")
+            if model_format is None:
+                filename_split = path.split(".")
+                ext = filename_split[-1]
                 if ext == "urdf":
                     model_format = "urdf"
                 elif ext == "sdf":
                     model_format = "sdf"
-        if model_format is None:
-            raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_file = {model_file}")
-        
-        spawn_model(xacro_file_path=path,
-                    pose=pose,
+                elif ext == "xacro":
+                    ext = filename_split[-2]
+                    if ext == "urdf":
+                        model_format = "urdf"
+                    elif ext == "sdf":
+                        model_format = "sdf"
+            if model_format is None:
+                raise RuntimeError(f"Model definition format was not specified and could not determine it automatically. model_file = {model_file}")
+            if model_definition_string is not None:
+                raise RuntimeError(f"Can only specify one of model_file and model_definition_string, but they are both set")
+            model_definition_string = Path(path).read_text()
+        elif model_definition_string is None:
+            raise RuntimeError(f"You must specify at least one of model_file and model_definition_string")
+
+
+        spawn_model(pose=pose,
                     model_name=model_name,
                     args=model_kwargs,
                     format=model_format,

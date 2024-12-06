@@ -227,6 +227,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._xbotjname_to_jid = {jname : enabled_joint_names.index(jname) for jname in enabled_joint_names}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
 
+        ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
+
         topic_name = "/xbotcore/joint_device_info"
         self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {topic_name}")
@@ -630,3 +632,5 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
 
 
+    def is_safety_triggered(self):
+        raise NotImplementedError()

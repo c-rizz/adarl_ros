@@ -1,43 +1,22 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import os
-import time
-from threading import Lock
 from typing import Dict, List, Tuple, Union, Optional, Any
 
-import adarl.utils.beep
 import adarl.utils.dbg.ggLog as ggLog
-import adarl.utils.utils
-import rospkg
 import rospy
-import sensor_msgs.msg
-from adarl_ros.adapters.RosAdapter import RosAdapter
 from adarl.utils.utils import JointState, LinkState, RequestFailError, Pose, build_pose, MoveFailError
 import numpy as np
 
-from xbot_interface import config_options as opt
-from xbot_interface import xbot_interface as xbot
-from urdf_parser_py.urdf import URDF
 
-from std_srvs.srv import SetBool
-from xbot_msgs.srv import PluginStatus, SetControlMask
-from xbot_msgs.msg import JointDeviceInfo
 import torch as th
 from adarl_ros.adapters.GazeboAdapter import GazeboAdapter
 from adarl_ros.adapters.RosXbotAdapter import RosXbotAdapter
 from typing_extensions import override
 from cartesian_interface.affine3 import Affine3 # needed by xbot_interface as it doesn't import it correctly
-import traceback
 
-from adarl.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
 from adarl_ros.adapters.GazeboAdapter import GazeboAdapter
-from adarl_ros.adapters.GazeboAdapterNoPlugin import GazeboAdapterNoPlugin
 from adarl.adapters.BaseSimulationAdapter import BaseSimulationAdapter
-from adarl.adapters.BaseJointEffortAdapter import BaseJointEffortAdapter
-from adarl_ros.adapters.RosAdapter import RosAdapter
-from adarl.adapters.BaseAdapter import BaseAdapter
-import time
-
 
 class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
@@ -333,3 +312,7 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
                                                 model_kwargs=model_kwargs,
                                                 model_format=model_format,
                                                 model_definition_string=model_definition_string)
+
+    @override
+    def get_joints_state_step_stats(self) -> th.Tensor:
+        raise NotImplementedError()
