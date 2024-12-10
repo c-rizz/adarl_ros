@@ -382,6 +382,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             time.sleep(0.5)
         ggLog.info(f"homing performed with response: {resp}")
         self._switch_control(switch_on=True) # we can reactivate ros control
+        time.sleep(2.0)
 
     def is_ros_control_running(self):
         return self._is_xbot_task_running("ros_control")
