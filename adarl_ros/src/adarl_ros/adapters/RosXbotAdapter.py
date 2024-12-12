@@ -105,10 +105,10 @@ def get_system_recap_string(robot):
 
 # def set_filters(set_enabled : bool, required_filter_hz = 2.0):
 #     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
-#     rospy.wait_for_service(enable_filter_srv_name)
+#     wait_for_ros_service(enable_filter_srv_name)
 #     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
 #     set_filter_srv_name = "/xbotcore/set_filter_profile_medium"
-#     rospy.wait_for_service(set_filter_srv_name)
+#     wait_for_ros_service(set_filter_srv_name)
 #     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
 #     filter_status = not set_enabled
 #     filter_hz = None
@@ -134,10 +134,10 @@ def get_system_recap_string(robot):
 
 def set_filters(set_enabled : bool, profile_name = "safe"):
     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
-    rospy.wait_for_service(enable_filter_srv_name)
+    wait_for_ros_service(enable_filter_srv_name, timeout=1.0)
     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
     set_filter_srv_name = f"/xbotcore/set_filter_profile_{profile_name}"
-    rospy.wait_for_service(set_filter_srv_name)
+    wait_for_ros_service(set_filter_srv_name, timeout=1.0)
     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
     filter_status = not set_enabled
     filter_hz = None
@@ -161,12 +161,22 @@ def set_filters(set_enabled : bool, profile_name = "safe"):
                 raise RuntimeError(f"Failed to set filters status: {resp}")
     ggLog.info(f"Filters {'enabled' if filter_status else 'disabled'}. Cutoff = {filter_hz}")
 
+def wait_for_ros_service(server_name: str, timeout=1.0):
+    try:
+        rospy.wait_for_service(server_name, timeout=timeout)
+    except rospy.exceptions.ROSException:
+        ggLog.warn(f"wait for service {server_name} timeouted.")
+        False
+    return True
+
 def is_simulated():
     # Is here some better way to do this?
     # Can I ask xbot?
     switch_srv_name = "/xbotcore/get_parameter_value"
     hw_type_param_name="/xbot/hal/hw_type"
-    rospy.wait_for_service(switch_srv_name)
+    service_avail=wait_for_ros_service(switch_srv_name, timeout=1.0)
+    if not service_avail:
+        return False
     enable_filter_srv = rospy.ServiceProxy(switch_srv_name, GetStringList)
     res=enable_filter_srv(hw_type_param_name)
     if not res.success:
@@ -347,11 +357,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         homing_switch_srv_name = "/xbotcore/homing/switch"
         homing_state_srv_name = "/xbotcore/homing/state"
         timeout_s= float("+inf")
-        # rospy.wait_for_service(homing_switch_srv_name, timeout=timeout_s)
+        wait_for_ros_service(homing_switch_srv_name, timeout=1.0)
         homing_ros_switch = rospy.ServiceProxy(homing_switch_srv_name, SetBool)
         ggLog.info(f"Created service proxy for {homing_switch_srv_name}")
 
-        # rospy.wait_for_service(homing_state_srv_name, timeout=timeout_s)
+        wait_for_ros_service(homing_state_srv_name, timeout=1.0)
         homing_ros_state = rospy.ServiceProxy(homing_state_srv_name, PluginStatus)
         ggLog.info(f"Created service proxy for {homing_state_srv_name}")
 
@@ -634,10 +644,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # ggLog.info(f"switch_xbotros_control({switch_on})")
         switch_srv_name = "/xbotcore/ros_control/switch"
         state_srv_name = "/xbotcore/ros_control/state"
-        # rospy.wait_for_service(switch_srv_name, timeout = timeout_s)
+        wait_for_ros_service(switch_srv_name, timeout=1.0)
         ros_ctrl_switch = rospy.ServiceProxy(switch_srv_name, SetBool)
         ggLog.info(f"Created service proxy for {switch_srv_name}")
-        # rospy.wait_for_service(state_srv_name, timeout = timeout_s)
+        wait_for_ros_service(state_srv_name, timeout=1.0)
         ros_ctrl_state = rospy.ServiceProxy(state_srv_name, PluginStatus)
         ggLog.info(f"Created service proxy for {state_srv_name}")
 
@@ -665,12 +675,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                     raise e
                 # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
             time.sleep(0.5)
+        time.sleep(2.0)
         ggLog.info(f"switched ros_control to state: {resp}")
         return switched_on
 
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
         control_mask_srv_name = "/xbotcore/joint_master/set_control_mask"
-        rospy.wait_for_service(control_mask_srv_name, timeout=timeout_s)
+        wait_for_ros_service(control_mask_srv_name, timeout=timeout_s)
         control_mask_srv = rospy.ServiceProxy(control_mask_srv_name, SetControlMask)
         t0 = time.monotonic()
         current_mask = None
