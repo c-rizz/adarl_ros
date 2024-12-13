@@ -177,15 +177,18 @@ def is_simulated():
     service_avail=wait_for_ros_service(switch_srv_name, timeout=1.0)
     if not service_avail:
         return False
-    enable_filter_srv = rospy.ServiceProxy(switch_srv_name, GetStringList)
-    res=enable_filter_srv(hw_type_param_name)
-    if not res.success:
-        raise RuntimeError(f"Failed to get hw type parameter from XBot!")
-    
-    hw_type=res.response[0]
-    
-    return hw_type=="sim"
-
+    get_param_value_srv = rospy.ServiceProxy(switch_srv_name, GetStringList)
+    try:
+        res=get_param_value_srv(hw_type_param_name)
+        if not res.success:
+            raise RuntimeError(f"Failed to get hw type parameter from XBot!")
+        
+        hw_type=res.response[0]
+        
+        return hw_type=="sim"
+    except:
+        ggLog.warn(f"Failed to call sevice proxy for {switch_srv_name}")
+        return False
 
 class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAdapter):
 
