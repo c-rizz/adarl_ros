@@ -617,6 +617,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._apply_commanded_joint_positions() # positions override impedances by setting impedance commands
         self._apply_commanded_joint_impedances() 
 
+    def apply_cmds_now(self):
+        self._apply_controls()
+
     @override
     def run(self, duration_sec: float):
         self._apply_controls()
