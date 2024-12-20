@@ -449,7 +449,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # self._jointStateMsgAgeAvg.addValue(obsDelay)
 
         jpos = self._robot_interface.getJointPosition()
-        jvel = self._robot_interface.getJointVelocity()
+        # jvel = self._robot_interface.getJointVelocity()
+        jvel = self._robot_interface.getMotorVelocity()
         jeff = self._robot_interface.getJointEffort()
 
 
