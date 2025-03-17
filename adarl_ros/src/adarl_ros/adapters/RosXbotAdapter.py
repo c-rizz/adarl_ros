@@ -290,17 +290,21 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         wait_for_sec=1.5 # [s]
         timeout_sec=60.0
         t0 = time.monotonic()
+        self._robot_interface=None
         while True:
             try:
                 self._robot_interface = xbot.RobotInterface(cfg)
                 if self._robot_interface is not None:
                     break
             except RuntimeError:
-                ggLog.error(f"{__class__}: Failed to initialized robot interface (is xbot-core running?)! Will try again in {wait_for_sec} s...")
+                ggLog.error(f"{__class__}: Failed to initialize robot interface (is xbot-core running?)! Will try again in {wait_for_sec} s...")
                 time.sleep(wait_for_sec)
                 if time.monotonic()-t0>timeout_sec:
                     break
-
+        
+        if self._robot_interface is None:
+            raise TimeoutError(f"Timed out while trying to construct robot interface")
+        
         ggLog.info(get_system_recap_string(self._robot_interface))
 
         self._ros_control_running=False
