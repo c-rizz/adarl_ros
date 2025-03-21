@@ -46,11 +46,13 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         jpos_cmd_max_vel_default = 0.0,
         jpos_cmd_max_acc = {},
         jpos_cmd_max_acc_default = 0.0,
-        enable_filters = True):
+        enable_filters = True,
+        base_link_name: str = "base_link"):
 
         """Initialize the Simulator.
 
         """
+        self._base_link_name=base_link_name
         self._model_fpath=model_fpath
         self._xbot2_config_path=xbot2_config_path
         self._headless=headless
@@ -123,7 +125,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             headless=self._headless,
             manual_stepping=True,
             init_steps=self._init_steps,
-            timeout=self._timeout_ms # [ms]
+            timeout=self._timeout_ms, # [ms]
+            base_link_name=self._base_link_name
         )
 
         reset_ok=self._xmj_sim.reset()
