@@ -126,7 +126,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             manual_stepping=True,
             init_steps=self._init_steps,
             timeout=self._timeout_ms, # [ms]
-            base_link_name=self._base_link_name
+            base_link_name=self._base_link_name,
+            match_rt_factor=True,
+            rt_factor_trgt=1.0
         )
 
         reset_ok=self._xmj_sim.reset()
