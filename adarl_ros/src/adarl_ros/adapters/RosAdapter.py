@@ -13,9 +13,9 @@ import rospy
 import sensor_msgs.msg
 from adarl.adapters.BaseAdapter import BaseAdapter
 from adarl.utils.utils import JointState, LinkState, RequestFailError
-from adarl_ros_utils.msg import LinkStates
 import numpy as np
 import adarl.utils.sigint_handler
+import torch as th
 
 class RosAdapter(BaseAdapter):
     """This class allows to control the execution of a ROS-based environment.
@@ -75,11 +75,9 @@ class RosAdapter(BaseAdapter):
         #TODO: it may make sense to keep track of the time spend in the rest of the processing
         sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._last_step_end_env_time)
         # ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
-        if sleepDuration > 0:
-            #rospy.loginfo("Sleeping "+str(sleepDuration))
-            self.run(sleepDuration)
-        else:
+        if sleepDuration <= 0:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
+        self.run(min(sleepDuration,0))
         t = self.getEnvTimeFromStartup()
         step_duration = t - self._last_step_end_env_time
         self._last_step_end_env_time = t
@@ -164,10 +162,11 @@ class RosAdapter(BaseAdapter):
             self._jointStateSubscriber = rospy.Subscriber(topic, sensor_msgs.msg.JointState, self._jointStateCallback, queue_size=1)
             ggLog.info(f"Subscribed to {topic}")
 
-        if len(self._linksToObserve)>0:
-            topic = "link_states"
-            self._linkStatesSubscriber = rospy.Subscriber(topic, LinkStates, self._linkStatesCallback, queue_size=1)
-            ggLog.info(f"Subscribed to {topic}")
+        # if len(self._linksToObserve)>0:
+        #     topic = "link_states"
+        #     from adarl_ros_utils.msg import LinkStates
+        #     self._linkStatesSubscriber = rospy.Subscriber(topic, LinkStates, self._linkStatesCallback, queue_size=1)
+        #     ggLog.info(f"Subscribed to {topic}")
 
 
 
@@ -397,7 +396,8 @@ class RosAdapter(BaseAdapter):
     def build_scenario(self, launch_file_pkg_and_path : Union[str,Tuple[str,str]],
                              launch_file_args : Dict[str,str],
                              base_port = 11350,
-                             ros_master_ip = "127.0.0.1"):
+                             ros_master_ip = "127.0.0.1",
+                             **kwargs):
         if isinstance(launch_file_pkg_and_path, (tuple, list)):
             launch_file = rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+"/"+launch_file_pkg_and_path[1]
         else:
@@ -413,3 +413,7 @@ class RosAdapter(BaseAdapter):
         if self._mmRosLauncher is not None:
             self._mmRosLauncher.stop()
         rospy.signal_shutdown(reason="RosAdapter.destroy()")
+
+    def get_joints_state_step_stats(self) -> th.Tensor:
+        raise NotImplementedError()
+    

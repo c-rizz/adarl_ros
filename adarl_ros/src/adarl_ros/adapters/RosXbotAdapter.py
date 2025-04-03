@@ -52,7 +52,7 @@ def build_xbot_cfg(is_floating_base):
         if urdf is not None:
             break
         if time.monotonic() - t0 > 60:
-            raise TimeoutError()
+            raise TimeoutError("Timed out waiting for /xbotcore/robot_description. Is xbot-core running?")
         time.sleep(0.2)
     srdf = rospy.get_param('/xbotcore/robot_description_semantic') # type: ignore
     if not isinstance(urdf, str):
@@ -166,7 +166,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         jpos_cmd_max_vel_default = 0.0,
                         jpos_cmd_max_acc = {},
                         jpos_cmd_max_acc_default = 0.0,
-                        enable_filters = True):
+                        enable_filters = True,
+                        position_commands_stiffness : float = 100.0,
+                        position_commands_damping : float = 10.0):
         super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation)
         self._is_floating_base = is_floating_base
         self._model_name = model_name
@@ -180,8 +182,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._joint_device_info_mutex = RLock()
         self._joint_device_info_cv = Condition(self._joint_device_info_mutex)
         self._last_joint_device_info : JointDeviceInfo | None = None
-        self._position_command_stiffness = 100.0
-        self._position_command_damping = 50.0
+        self._position_command_stiffness = position_commands_stiffness
+        self._position_command_damping = position_commands_damping
         self._commanded_joint_positions : Dict[Tuple[str,str],Tuple[float,float,float]] = {}
         # joint trajectories are ndarrays listing waypoints of format (time, position, velocuty, acceleration)
         self._commanded_joint_trajs_tpva : Dict[Tuple[str,str],np.ndarray]= {}
@@ -301,10 +303,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             return ret
 
     @override
-    def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
+    def getLinksState(self, requestedLinks : List[Tuple[str,str]], use_com_pose = False) -> Dict[Tuple[str,str],LinkState]:
         if not self._listenersStarted:
             raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_links, and then call startController")
-
+        if use_com_pose:
+            raise NotImplementedError(f"use_com_frame not supported")
         #print("self._linksToObserve = "+str(self._linksToObserve))
         for l in requestedLinks:
             if l not in self._linksToObserve:
@@ -452,6 +455,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     @override
     def run(self, duration_sec: float):
+        ggLog.info(f"XbotAdapter.run()")
         self._apply_controls()
         super().run(duration_sec)
 
@@ -473,7 +477,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         return step_duration
 
-    def _switch_control(self, switch_on : bool, timeout_s : float = float("+inf")) -> bool:
+    def _switch_control(self, switch_on : bool, timeout_s : float = .5) -> bool:
         # for i in range(20):
         #     time.sleep(1)
         #     print(i)
@@ -625,6 +629,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                                     f"    target = {jointPositions}\n"
                                     f"    joint state = {[ji.position.item() for jn,ji in js.items()]}\n"
                                     f"    errors = {errors}\n"
+                                    f"    max_error = {max(errors)}\n"
                                     f"    tolerance = {joint_position_tolerance}")
             if elapsed_wall_time > timeout_wall:
                 self.clear_commands()
@@ -634,3 +639,25 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     def is_safety_triggered(self):
         raise NotImplementedError()
+    
+    def get_last_applied_command(self) -> th.Tensor:
+        raise NotImplementedError()
+    
+    def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        imus = self._robot_interface.getImu()
+        print(f"imus = {imus}")
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
+        ref_imus = {} # What imu to use for which links
+        for rl in req_links:
+            if rl in imus:
+                ref_imus[rl] = rl
+            else:
+                ref_imus[rl] = list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
+                # raise RuntimeError(f"Cannot find imu for link '{rl}'. Available imus = {imus}")
+        link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
+        orientation_mats = [link2imu_poses[ln].matrix()[:3,:3]*imus[ref_imus[ln]].getOrientation() for ln in req_links]
+        # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
+        gdirs = [th.as_tensor(m[2,:]) for m in orientation_mats]
+        return th.stack(gdirs)
