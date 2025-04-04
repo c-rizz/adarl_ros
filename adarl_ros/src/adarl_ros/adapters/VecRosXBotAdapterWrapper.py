@@ -175,14 +175,15 @@ class VecRosXBotAdapterWrapper(BaseVecJointImpedanceAdapter, BaseVecJointPositio
                                     velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None,
                                     joint_position_tolerance : float = 0.01,
-                                    max_time_s : float = 60) -> None:
-        ggLog.info(f"positions = {positions}")
+                                    max_time_s : float = 60,
+                                    joint_velocity_scaling : dict[tuple[str,str],float] = {}) -> None:
         positions=positions[0]
         self._sub_adapter.moveToJointPoseSync(  jointPositions={jn:jp.item() for jn,jp in zip(joint_names,positions)},
                                                 velocity_scaling=velocity_scaling,
                                                 acceleration_scaling=acceleration_scaling,
                                                 joint_position_tolerance = joint_position_tolerance,
-                                                max_time_s = max_time_s)
+                                                max_time_s = max_time_s,
+                                                joint_velocity_scaling=joint_velocity_scaling)
         
     @override
     def setJointsPositionCommand(self, joint_names : Sequence[tuple[str,str]], positions : th.Tensor,

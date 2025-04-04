@@ -455,7 +455,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     @override
     def run(self, duration_sec: float):
-        ggLog.info(f"XbotAdapter.run()")
+        # ggLog.info(f"XbotAdapter.run()")
         self._apply_controls()
         super().run(duration_sec)
 
@@ -576,7 +576,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                                     velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None,
                                     joint_position_tolerance : float = 0.01,
-                                    max_time_s : float = 60) -> None:
+                                    max_time_s : float = 60,
+                                    joint_velocity_termination_threshold = 0.01,
+                                    joint_velocity_scaling : dict[Tuple[str,str],float] = {}) -> None:
         self.clear_commands()
         if velocity_scaling is None:
             velocity_scaling = 1.0
@@ -587,25 +589,39 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         joint_trajs = {}
         for jn,p_ref in jointPositions.items():
             # just to compute the duration
-            traj_tpva = build_1D_vramp_trajectory(  t0 = self.getEnvTimeFromStartup(),
+            vs = joint_velocity_scaling.get(jn, velocity_scaling)
+            traj_tpva = build_1D_vramp_trajectory(  t0 = 0.0,
                                                     p0 = js[jn].position.item(),
                                                     v0 = js[jn].rate.item(),
                                                     pf = p_ref,
                                                     ctrl_freq_hz = 1000.0,
-                                                    max_vel=self._jpos_cmd_max_vel.get(jn, self._jpos_cmd_max_vel_default)*velocity_scaling,
+                                                    max_vel=self._jpos_cmd_max_vel.get(jn, self._jpos_cmd_max_vel_default)*vs,
                                                     max_acc=self._jpos_cmd_max_acc.get(jn, self._jpos_cmd_max_acc_default)*acceleration_scaling)
             joint_trajs[jn] = traj_tpva
             traj_duration = traj_tpva[-1][0]
-            max_traj_duration = max(0,traj_duration)
-        timeout_env = max_traj_duration*2
+            max_traj_duration = max(max_traj_duration,traj_duration)
+        for jn,p_ref in jointPositions.items(): # scale to have all trajectories be the same duration
+            joint_traj = joint_trajs[jn]
+            traj_duration = joint_traj[-1][0]
+            scale = max_traj_duration/traj_duration
+            joint_traj[:,0] *= scale # time
+            joint_traj[:,2] *= 1/scale # velocity
+            joint_traj[:,3] *= 1/(scale**2) # acceleration
+        # ggLog.info(f"traj_tpva = \n{traj_tpva}")
+        timeout_env = max_traj_duration*2+1
         timeout_wall = timeout_env*20
         if max_traj_duration > max_time_s:
             raise RuntimeError(f"Computed trajectory is excessively long, would last {max_traj_duration}s, max_time is set to {max_time_s}s. \n"
-                               f"Initial joint state was: {[(jn,ji.position.item(),ji.rate.item()) for jn,ji in js.items()]}\n"
-                               f"Target joint position was: {jointPositions}\n"
+                               f"Joint names           : {[jn for jn,ji in js.items()]}\n"
+                               f"Initial joint position: "+str([f"{ji.position.item(): 2.4f}" for jn,ji in js.items()])+"\n"
+                               f"Initial joint velocity: "+str([f"{ji.rate.item(): 2.4f}" for jn,ji in js.items()])+"\n"
+                               f"Target  joint position: "+str([f"{jp: 2.4f}" for jp in jointPositions.values()])+"\n"
                                f"Durations {[(jn,traj_tpva[-1][0]) for jn,traj_tpva in joint_trajs.items()]}\n"
-                               f"Raise it if it is actually ok.")
+                               f"Raise the max_time if it is actually ok.")
         # print(f"joint_trajs max_v = {max([max(t[2]) for t in joint_trajs.values() ])}")
+        t0 = self.getEnvTimeFromStartup()
+        for jn in joint_trajs.keys():
+            joint_trajs[jn][:,0] += t0
         self._setJointTrajectoryCommand(jointTrajectories_tpva = joint_trajs)
 
         # self.setJointsPositionCommand(jointPositions=jointPositions)
@@ -616,11 +632,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         reached_position = all([abs(e) < joint_position_tolerance for e in errors])
         elapsed_env_time = 0.0
         elapsed_wall_time = 0.0
-        while not reached_position:
+        stopped = False
+        while not (reached_position or (stopped and elapsed_env_time>=max_traj_duration)):
             self.run(self._stepLength_sec)
             js = self.getJointsState(list(jointPositions.keys()))
             errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
             reached_position = all([abs(e) < joint_position_tolerance for e in errors])
+            stopped = all([abs(ji.rate.item())<joint_velocity_termination_threshold for ji in js.values()])
             elapsed_env_time = self.getEnvTimeFromStartup() - t0_env
             elapsed_wall_time = time.monotonic() - t0_wall
             if elapsed_env_time > timeout_env:
@@ -645,7 +663,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     
     def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
         imus = self._robot_interface.getImu()
-        print(f"imus = {imus}")
+        # print(f"imus = {imus}")
         if requestedLinks is None:
             requestedLinks = self._monitored_links
         req_links = [ln[1] for ln in requestedLinks] # Remove the model name

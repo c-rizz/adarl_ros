@@ -74,7 +74,7 @@ class RosAdapter(BaseAdapter):
             raise RuntimeError("ROS has been shut down. Will not step.")
         #TODO: it may make sense to keep track of the time spend in the rest of the processing
         sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._last_step_end_env_time)
-        # ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
+        ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
         if sleepDuration <= 0:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
         self.run(min(sleepDuration,0))
