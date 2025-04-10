@@ -16,6 +16,23 @@ from adarl.utils.utils import JointState, LinkState, RequestFailError
 import numpy as np
 import adarl.utils.sigint_handler
 import torch as th
+from typing_extensions import override
+
+
+def precise_sleep(delay_sec : float):
+    """Tries to sleep a bit more precisely than time.sleep(), but it is still quite bad,
+        as we cannot avoid thread switches while sleeping.
+
+    Parameters
+    ----------
+    delay_sec : float
+        Time to sleep for, in seconds
+    """
+    target = time.perf_counter_ns() + delay_sec * 1000_000_000
+    while time.perf_counter_ns() < target:
+        pass
+
+
 
 class RosAdapter(BaseAdapter):
     """This class allows to control the execution of a ROS-based environment.
@@ -64,7 +81,17 @@ class RosAdapter(BaseAdapter):
 
 
     def run(self, duration_sec : float):
-        rospy.sleep(duration_sec)
+        if self._use_sim_time:
+            rospy.sleep(duration_sec)
+        else:
+            t0 = time.monotonic()
+            long_sleep = max(0,duration_sec-0.2)
+            if long_sleep>0:
+                time.sleep(long_sleep)
+            t = time.monotonic()
+            while t-t0 < duration_sec:
+                precise_sleep(duration_sec-(t-t0)) # can still be quite bad if a thread switch happens while we sleep
+                t = time.monotonic()
 
 
     def step(self) -> float:
@@ -74,10 +101,10 @@ class RosAdapter(BaseAdapter):
             raise RuntimeError("ROS has been shut down. Will not step.")
         #TODO: it may make sense to keep track of the time spend in the rest of the processing
         sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._last_step_end_env_time)
-        ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
+        # ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
         if sleepDuration <= 0:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
-        self.run(min(sleepDuration,0))
+        self.run(max(sleepDuration,0))
         t = self.getEnvTimeFromStartup()
         step_duration = t - self._last_step_end_env_time
         self._last_step_end_env_time = t
@@ -133,7 +160,7 @@ class RosAdapter(BaseAdapter):
         # init_node uses use_sim_time to determine which time to use, but I can't
         # find a reliable way for it to be set before init_node is being called
         # So we wait for it to be set to either true or false
-        useSimTime = None
+        useSimTime : float = None
         while useSimTime is None:
             try:
                 useSimTime = rospy.get_param("/use_sim_time")
@@ -145,10 +172,14 @@ class RosAdapter(BaseAdapter):
                 time.sleep(1)
         ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
 
+        self._use_sim_time = useSimTime
         rospy.init_node('ros_env_controller', anonymous=True)
         adarl.utils.sigint_handler.fix_sigint_handler()
 
-        self._startup_env_time = rospy.get_time() #Will be overwritten by resetWorld
+        if self._use_sim_time:
+            self._startup_env_time = rospy.get_time() #Will be overwritten by resetWorld
+        else:
+            self._startup_env_time = time.monotonic()
         self._last_step_end_env_time = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
 
         self._imageSubscribers = []
@@ -386,9 +417,16 @@ class RosAdapter(BaseAdapter):
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not reset.")
 
+    @override
+    def initialize_for_episode(self):
+        super().initialize_for_episode()
+        self._last_step_end_env_time = self.getEnvTimeFromStartup()
 
     def getEnvTimeFromStartup(self) -> float:
-        t = rospy.get_time() - self._startup_env_time
+        if self._use_sim_time:
+            t = rospy.get_time() - self._startup_env_time
+        else:
+            t = time.monotonic() - self._startup_env_time
         return t
 
 

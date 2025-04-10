@@ -127,7 +127,7 @@ def set_filters(set_enabled : bool, required_filter_hz = 20.0):
 
 
 
-def is_simulated():
+def detect_simulated():
     # Is here some better way to do this?
     # Can I ask xbot?
     topic_names = [t[0] for t in rospy.get_published_topics()]
@@ -168,7 +168,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         jpos_cmd_max_acc_default = 0.0,
                         enable_filters = True,
                         position_commands_stiffness : float = 100.0,
-                        position_commands_damping : float = 10.0):
+                        position_commands_damping : float = 10.0,
+                        is_simulated : bool | None = False):
         super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation)
         self._is_floating_base = is_floating_base
         self._model_name = model_name
@@ -203,11 +204,14 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._last_jdi_time = float("-inf")
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
+        self._is_simulated = is_simulated if is_simulated is not None else detect_simulated()
 
+    def is_simulated(self):
+        return self._is_simulated
 
     def _joint_device_info_callback(self, msg):
         with self._joint_device_info_mutex:
-            self._last_jdi_time = self.getEnvTimeFromReset()
+            self._last_jdi_time = self.getEnvTimeFromStartup()
             self._last_joint_device_info = msg
 
     @override
@@ -231,6 +235,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
 
+        self._jimpedance_controlled_joints_jids = np.array([self._xbotjname_to_jid[jn] for model_name,jn in self._jimpedance_controlled_joints])
         topic_name = "/xbotcore/joint_device_info"
         self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {topic_name}")
@@ -412,6 +417,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._robot_interface.setVelocityReference(vrefs)
         self._robot_interface.setEffortReference(erefs)
         self._robot_interface.move()
+
+        self._last_sent_pvesd = np.stack([prefs,vrefs,erefs,pgains,vgains], axis = 1)
         # ggLog.info(f"Sent robot_interface command")
 
 
@@ -477,7 +484,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         return step_duration
 
-    def _switch_control(self, switch_on : bool, timeout_s : float = .5) -> bool:
+    def _switch_control(self, switch_on : bool, timeout_s : float = 5.) -> bool:
         # for i in range(20):
         #     time.sleep(1)
         #     print(i)
@@ -541,12 +548,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         return jdi.mask
 
     @override
-    def resetWorld(self):
-        super().resetWorld()
+    def initialize_for_episode(self):
+        super().initialize_for_episode()
         self.clear_commands()
         self._last_jdi_time = float("-inf")
         self._last_joint_device_info = None
-        if is_simulated():
+        if self.is_simulated():
             req_mask = 255
             mask = self._setup_joint_control(control_mask = req_mask)
             if mask != req_mask:
@@ -585,13 +592,15 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         if acceleration_scaling is None:
             acceleration_scaling = 1.0
         js = self.getJointsState(list(jointPositions.keys()))
+        last_refs = self.get_current_joint_impedance_command()
+        last_refs_dict = {self._jimpedance_controlled_joints[i]:last_refs[i] for i in range(len(self._jimpedance_controlled_joints))}
         max_traj_duration = 0
         joint_trajs = {}
         for jn,p_ref in jointPositions.items():
             # just to compute the duration
             vs = joint_velocity_scaling.get(jn, velocity_scaling)
             traj_tpva = build_1D_vramp_trajectory(  t0 = 0.0,
-                                                    p0 = js[jn].position.item(),
+                                                    p0 = last_refs_dict[jn][0].item(),
                                                     v0 = js[jn].rate.item(),
                                                     pf = p_ref,
                                                     ctrl_freq_hz = 1000.0,
@@ -658,8 +667,19 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def is_safety_triggered(self):
         raise NotImplementedError()
     
-    def get_last_applied_command(self) -> th.Tensor:
-        raise NotImplementedError()
+    def _get_current_refs_pvesd(self):
+        self._robot_interface.sense(update_references=True)
+        return np.stack([   self._robot_interface.getPositionReference(),
+                            self._robot_interface.getVelocityReference(),
+                            self._robot_interface.getEffortReference(),
+                            self._robot_interface.getStiffness(),
+                            self._robot_interface.getDamping()], axis = 1)
+
+    @override
+    def get_current_joint_impedance_command(self) -> th.Tensor:
+        ref_j_pvesd = self._get_current_refs_pvesd()
+        # pvesd_by_name = {(mn,jn):ref_j_pvesd[self._xbotjname_to_jid[jn]] for mn,jn in self._jimpedance_controlled_joints}
+        return th.as_tensor(ref_j_pvesd[self._jimpedance_controlled_joints_jids], device=self._torch_device, dtype=th.float32)
     
     def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
         imus = self._robot_interface.getImu()
@@ -677,5 +697,5 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
         orientation_mats = [link2imu_poses[ln].matrix()[:3,:3]*imus[ref_imus[ln]].getOrientation() for ln in req_links]
         # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
-        gdirs = [th.as_tensor(m[2,:]) for m in orientation_mats]
+        gdirs = [-th.as_tensor(m[2,:]) for m in orientation_mats]
         return th.stack(gdirs)

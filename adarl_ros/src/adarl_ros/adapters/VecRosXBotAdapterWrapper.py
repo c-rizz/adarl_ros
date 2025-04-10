@@ -159,12 +159,12 @@ class VecRosXBotAdapterWrapper(BaseVecJointImpedanceAdapter, BaseVecJointPositio
         return self._sub_adapter.getEnvTimeFromStartup()
     
     @override
-    def getEnvTimeFromReset(self) -> float:
-        return self._sub_adapter.getEnvTimeFromReset()
+    def getEnvTimeFromEpStart(self) -> float:
+        return self._sub_adapter.getEnvTimeFromEpStart()
     
     @override
-    def get_last_applied_command(self) -> th.Tensor:
-        return self._sub_adapter.get_last_applied_command().unsqueeze(0)
+    def get_current_joint_impedance_command(self) -> th.Tensor:
+        return self._sub_adapter.get_current_joint_impedance_command().unsqueeze(0)
     
     def sub_adapter(self):
         return self._sub_adapter
@@ -193,3 +193,7 @@ class VecRosXBotAdapterWrapper(BaseVecJointImpedanceAdapter, BaseVecJointPositio
         self._sub_adapter.setJointsPositionCommand(jointPositions={jn:jp.item() for jn,jp in zip(joint_names,positions)},
                                                    velocity_scaling=velocity_scaling,
                                                    acceleration_scaling=acceleration_scaling)
+    @override
+    def initialize_for_episode(self, vec_mask: th.Tensor | None = None):
+        if vec_mask is None or vec_mask[0]:
+            self._sub_adapter.initialize_for_episode()
