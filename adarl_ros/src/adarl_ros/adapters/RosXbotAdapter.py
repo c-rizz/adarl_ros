@@ -203,6 +203,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._last_jdi_time = float("-inf")
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
+        self._control_dt = 0.001 # can I get this from somewhere?
 
 
     def _joint_device_info_callback(self, msg):
@@ -679,3 +680,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
         gdirs = [th.as_tensor(m[2,:]) for m in orientation_mats]
         return th.stack(gdirs)
+    
+    def control_period(self):
+        self._control_dt

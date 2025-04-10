@@ -193,3 +193,8 @@ class VecRosXBotAdapterWrapper(BaseVecJointImpedanceAdapter, BaseVecJointPositio
         self._sub_adapter.setJointsPositionCommand(jointPositions={jn:jp.item() for jn,jp in zip(joint_names,positions)},
                                                    velocity_scaling=velocity_scaling,
                                                    acceleration_scaling=acceleration_scaling)
+
+
+    @override
+    def control_period(self) -> th.Tensor:
+        return th.as_tensor(self._control_dt)
