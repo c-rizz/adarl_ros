@@ -61,8 +61,8 @@ class RosXbotGazeboAdapter(RosXbotAdapter, BaseSimulationAdapter):
         return self._gazeboAdapter.getEnvTimeFromStartup()
     
     @override
-    def getEnvTimeFromReset(self) -> float:
-        return self._gazeboAdapter.getEnvTimeFromReset()
+    def getEnvTimeFromEpStart(self) -> float:
+        return self._gazeboAdapter.getEnvTimeFromEpStart()
     
     @override
     def set_monitored_joints(self, jointsToObserve : List[Tuple[str,str]]):
