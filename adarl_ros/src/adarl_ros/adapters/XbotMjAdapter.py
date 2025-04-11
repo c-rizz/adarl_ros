@@ -128,7 +128,11 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             timeout=self._timeout_ms, # [ms]
             base_link_name=self._base_link_name,
             match_rt_factor=True,
-            rt_factor_trgt=1.0
+            rt_factor_trgt=1.0,
+            render_to_file = True,
+            custom_camera_name = "custom_camera",
+            render_base_path = "/tmp",
+            render_fps = 60.0
         )
 
         reset_ok=self._xmj_sim.reset()
