@@ -468,6 +468,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         super().run(duration_sec)
 
     @override
+    def initialize_for_step(self):
+        pass
+
+    @override
     def step(self) -> float:
         step_duration = super().step()
         self.clear_commands()

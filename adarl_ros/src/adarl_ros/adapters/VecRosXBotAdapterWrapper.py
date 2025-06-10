@@ -193,15 +193,17 @@ class VecRosXBotAdapterWrapper(BaseVecJointImpedanceAdapter, BaseVecJointPositio
         self._sub_adapter.setJointsPositionCommand(jointPositions={jn:jp.item() for jn,jp in zip(joint_names,positions)},
                                                    velocity_scaling=velocity_scaling,
                                                    acceleration_scaling=acceleration_scaling)
-<<<<<<< HEAD
 
 
     @override
     def control_period(self) -> th.Tensor:
-        return th.as_tensor(self._control_dt)
-=======
+        return th.as_tensor([self.sub_adapter.control_period()], device=self._out_th_device, dtype=self._out_th_float_dtype)
+    
     @override
     def initialize_for_episode(self, vec_mask: th.Tensor | None = None):
         if vec_mask is None or vec_mask[0]:
             self._sub_adapter.initialize_for_episode()
->>>>>>> f14b8c7233ee8bbaae8b3d50963c00666fcf7c7a
+
+    @override
+    def initialize_for_step(self):
+        return self.sub_adapter.initialize_for_step()
