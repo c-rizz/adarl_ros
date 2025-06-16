@@ -75,12 +75,19 @@ void RenderingHelper::searchCameras()
 {
   gazebo::sensors::SensorManager* smanager = gazebo::sensors::SensorManager::Instance();
   std::vector<gazebo::sensors::SensorPtr> sensors = smanager->GetSensors();
+  std::set<std::string> already_known_names;
+  for(auto cam : gymCameras)
+    already_known_names.insert(cam->sensor->Name());
+  gymCameras.clear();
   for(gazebo::sensors::SensorPtr sp : sensors)
   {
     if(boost::iequals(sp->Type(),"camera"))
     {
       std::string rosTfFrame_id = "";//TODO: somehow get this
       gymCameras.push_back(std::make_shared<GymCamera>(std::dynamic_pointer_cast<gazebo::sensors::CameraSensor>(sp),rosTfFrame_id));
+      std::string name = gymCameras.back()->sensor->Name();
+      if(already_known_names.find(name) == already_known_names.end())
+        ROS_DEBUG_STREAM("Found new camera "<<name);
     }
   }
 }
@@ -108,6 +115,8 @@ RenderingHelper::RenderingHelper(gazebo::physics::WorldPtr world)
  */
 bool RenderingHelper::renderCameras(std::vector<std::shared_ptr<GymCamera>> cameras)
 {
+  if(cameras.size()==0)
+    return true;
   avgRenderThreadDelay.onTaskStart();
   avgTotalRenderTime.onTaskStart();
 
@@ -239,19 +248,20 @@ void RenderingHelper::renderCameras(std::vector<std::string> cameras, gazebo_gym
   //If can't find a camera do a search
   for(std::string reqName : cameras)
   {
-    bool found = false;
-    for(std::shared_ptr<GymCamera> cam : gymCameras)
+    for(int tries=0; tries<2; tries++)
     {
-      if(reqName.compare(cam->sensor->Name())==0)
+      bool found = false;
+      for(std::shared_ptr<GymCamera> cam : gymCameras)
       {
-        found = true;
-        break;
+        if(reqName.compare(cam->sensor->Name())==0)
+        {
+          found = true;
+          break;
+        }
       }
-    }
-    if(!found)
-    {
+      if(found)
+        break;
       searchCameras();
-      break;//Only do it once
     }
   }
 
@@ -279,15 +289,18 @@ void RenderingHelper::renderCameras(std::vector<std::string> cameras, gazebo_gym
   }
   ROS_DEBUG_STREAM("Selected "<<requestedCameras.size()<<" cameras");
 
-  bool ret = renderCameras(requestedCameras);//renders the cameras on the rendering thread
-  if(!ret)
+  if(requestedCameras.size()>0)
   {
-    ROS_WARN("GazeboGymEnvPlugin: Failed to render cameras");
-    renderedCameras.success=false;
-    renderedCameras.error_message="Renderer task timed out";
-    return;
+    bool ret = renderCameras(requestedCameras);//renders the cameras on the rendering thread
+    if(!ret)
+    {
+      ROS_WARN("GazeboGymEnvPlugin: Failed to render cameras");
+      renderedCameras.success=false;
+      renderedCameras.error_message="Renderer task timed out";
+      return;
+    }
   }
-
+  
   //Fill up the response with the images
   gazebo::common::Time simTime = world->SimTime();
   for(std::shared_ptr<GymCamera> cam  : requestedCameras)

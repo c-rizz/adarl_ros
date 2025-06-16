@@ -4,6 +4,8 @@ project(gazebo_gym_env_plugin)
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++17 -Wall)
 
+set(CMAKE_BUILD_TYPE "Release") # Always use optimizations for this package
+
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
@@ -63,6 +65,7 @@ add_message_files(
  LinksInfoResponse.msg
 
  JointEffortRequest.msg
+ JointProperties.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -70,6 +73,8 @@ add_service_files(
   FILES
   StepSimulation.srv
   RenderCameras.srv
+  GetInfo.srv
+  SetJointProperties.srv
 )
 
 # add_action_files(
@@ -132,7 +137,12 @@ include_directories(
 )
 
 ## Declare a C++ library
-add_library(gazebo_gym_env_plugin SHARED src/gazeboGymEnvPlugin.cpp src/utils.cpp src/RenderingHelper.cpp src/JointEffortControl.cpp)
+add_library(gazebo_gym_env_plugin SHARED 
+                    src/gazeboGymEnvPlugin.cpp
+                    src/utils.cpp
+                    src/RenderingHelper.cpp
+                    src/JointEffortControl.cpp
+                    src/JointMonitor.cpp)
 add_dependencies(gazebo_gym_env_plugin ${PROJECT_NAME}_generate_messages_cpp )
 
 ## Add cmake target dependencies of the library
@@ -143,7 +153,7 @@ add_dependencies(gazebo_gym_env_plugin ${PROJECT_NAME}_generate_messages_cpp )
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/lr_gym_node.cpp)
+# add_executable(${PROJECT_NAME}_node src/adarl_ros_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the

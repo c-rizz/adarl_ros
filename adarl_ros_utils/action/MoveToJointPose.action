@@ -1,0 +1,15 @@
+
+#goal definition
+
+# Joint pose, it must have the right number of elements, one per joint
+float64[] pose
+
+
+float64 velocity_scaling
+float64 acceleration_scaling
+---
+#result definition
+bool succeded
+string error_message
+---
+#feedback

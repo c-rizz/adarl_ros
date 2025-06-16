@@ -1,0 +1,17 @@
+<library path="lib/libadarl_ros_utils">
+  <class name="adarl_ros_utils/GravityCompensatedEffortController" type="adarl_ros_utils::GravityCompensatedEffortController" base_class_type="controller_interface::ControllerBase">
+    <description>
+      With this controller you can control joint efforts while having gravity compensation.
+    </description>
+  </class>
+  <class name="adarl_ros_utils/LinkStatePublisherController" type="adarl_ros_utils::LinkStatePublisherController" base_class_type="controller_interface::ControllerBase">
+    <description>
+      This controller publishes the link_state of the robot.
+    </description>
+  </class>
+  <class name="adarl_ros_utils/CartesianPositionController" type="adarl_ros_utils::CartesianPositionController" base_class_type="controller_interface::ControllerBase">
+    <description>
+      With this controller you can control the cartesian position of the end effector.
+    </description>
+  </class>
+</library>
