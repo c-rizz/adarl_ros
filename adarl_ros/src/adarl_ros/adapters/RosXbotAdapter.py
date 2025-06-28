@@ -702,7 +702,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
         orientation_mats = [link2imu_poses[ln].matrix()[:3,:3]*imus[ref_imus[ln]].getOrientation() for ln in req_links]
         # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
-        gdirs = [th.as_tensor(m[2,:]) for m in orientation_mats]
+        gdirs = [-th.as_tensor(m[2,:]) for m in orientation_mats]
         return th.stack(gdirs)
     
     def control_period(self):
