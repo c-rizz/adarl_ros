@@ -686,25 +686,75 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # pvesd_by_name = {(mn,jn):ref_j_pvesd[self._xbotjname_to_jid[jn]] for mn,jn in self._jimpedance_controlled_joints}
         return th.as_tensor(ref_j_pvesd[self._jimpedance_controlled_joints_jids], device=self._torch_device, dtype=th.float32)
     
+    @override
     def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
         imus = self._robot_interface.getImu()
         # print(f"imus = {imus}")
         if requestedLinks is None:
             requestedLinks = self._monitored_links
         req_links = [ln[1] for ln in requestedLinks] # Remove the model name
-        ref_imus = {} # What imu to use for which links
+        ref_imus : dict[str,str] = {} # What imu to use for which links
         for rl in req_links:
-            if rl in imus:
-                ref_imus[rl] = rl
-            else:
-                ref_imus[rl] = list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
-                # raise RuntimeError(f"Cannot find imu for link '{rl}'. Available imus = {imus}")
+            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
         link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
         orientation_mats = [link2imu_poses[ln].matrix()[:3,:3]*imus[ref_imus[ln]].getOrientation() for ln in req_links]
         # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
         gdirs = [-th.as_tensor(m[2,:]) for m in orientation_mats]
         return th.stack(gdirs)
     
+    @override
+    def get_link_relative_angular_velocity(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        imus = self._robot_interface.getImu()
+        # print(f"imus = {imus}")
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
+        ref_imus : dict[str,str] = {} # What imu to use for which links
+        for rl in req_links:
+            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
+        link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
+        angvels = [self._thtens(np.matmul(link2imu_poses[ln].matrix()[:3,:3],imus[ref_imus[ln]].getAngularVelocity())) for ln in req_links]
+        # for ln in req_links:
+        #     ggLog.info(f"imu angvel = {imus[ref_imus[ln]].getAngularVelocity().transpose()}")
+        #     ggLog.info(f"link2imu_poses[ln].matrix()[:3,:3] = {link2imu_poses[ln].matrix()[:3,:3]}")
+        # ggLog.info(f"angvels = {angvels}")
+        return th.stack(angvels)
+    
     def control_period(self):
         return self._control_dt
         
+    def _thtens(self, arr: np.ndarray) -> th.Tensor:
+        """Convert a numpy array to a torch tensor on the configured device."""
+        return th.as_tensor(arr, device=self._torch_device)
+    
+    def get_local_link_linear_acceleration(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        imus = self._robot_interface.getImu()
+        # print(f"imus = {imus}")
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
+        ref_imus : dict[str,str] = {} # What imu to use for which links
+        for rl in req_links:
+            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
+        imu2link_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
+        accelerations : list[th.Tensor] = []
+        for ln in req_links:
+            imu2link = imu2link_poses[ln]
+            imu2link_rotmat = imu2link.matrix()[:3,:3]
+            imu = imus[ref_imus[ln]]
+            imu_linacc = imu.getLinearAcceleration()
+            if np.allclose(imu2link_rotmat, np.eye(imu2link_rotmat.shape[0]), atol=1e-5):
+                acceleration = imu_linacc
+            else:
+                raise RuntimeError(f"Cannot compute local linear acceleration for link '{ln}' as it is not directly attached to an IMU")
+                com_offset_xyz = imu2link.translation()
+                imu_angvel = imu.getAngularVelocity()
+                imu_angacc # Would need this somehow
+                imu_linvel # Would need this somehow
+                local_angvel = imu2link_rotmat @ imu_linacc
+                local_linvel = imu2link_rotmat @ (imu_linvel - np.cross(com_offset_xyz, imu_angvel))
+                acc = imu2link_rotmat @ (imu_linacc - np.cross(com_offset_xyz, imu_angacc))
+                correction = np.cross(local_angvel, local_linvel)
+                acceeleration = acc + correction
+            accelerations.append(self._thtens(acceleration))
+        return th.stack(accelerations)

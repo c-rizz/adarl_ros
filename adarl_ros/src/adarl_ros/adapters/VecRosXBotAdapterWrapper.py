@@ -73,12 +73,26 @@ class VecRosXBotAdapterWrapper(BaseVecJointImpedanceAdapter, BaseVecJointPositio
                         for k in requestedLinks]).unsqueeze(0).to(self._out_th_device)
         return r
 
+    @override
     def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
         if requestedLinks is None:
             requestedLinks = self.sub_adapter()._monitored_links
         return self._sub_adapter.get_link_gravity_direction(requestedLinks=requestedLinks).unsqueeze(0).to(device=self._out_th_device,
                                                                                                            dtype=self._out_th_float_dtype)
 
+    @override
+    def get_link_relative_angular_velocity(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        if requestedLinks is None:
+            requestedLinks = self.sub_adapter()._monitored_links
+        return self._sub_adapter.get_link_relative_angular_velocity(requestedLinks=requestedLinks).unsqueeze(0).to(device=self._out_th_device,
+                                                                                                           dtype=self._out_th_float_dtype)
+
+    @override
+    def get_local_link_linear_acceleration(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        if requestedLinks is None:
+            requestedLinks = self.sub_adapter()._monitored_links
+        return self._sub_adapter.get_local_link_linear_acceleration(requestedLinks=requestedLinks).unsqueeze(0).to(device=self._out_th_device,
+                                                                                                           dtype=self._out_th_float_dtype)
 
     @override
     def setJointsImpedanceCommand(self, joint_impedances_pvesd : th.Tensor,
