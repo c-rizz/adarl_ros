@@ -32,7 +32,25 @@ def precise_sleep(delay_sec : float):
     while time.perf_counter_ns() < target:
         pass
 
+class AlteredClock():
+    def __init__(self, realtime_factor : float = 1.0):
+        self._realtime_factor = realtime_factor
 
+    def sleep(self, duration_sec : float):
+        """Sleep for the specified duration, altered by the realtime factor."""
+        duration_sec = duration_sec / self._realtime_factor
+        t0 = time.monotonic()
+        long_sleep = max(0,duration_sec-0.2)
+        if long_sleep>0:
+            time.sleep(long_sleep)
+        t = time.monotonic()
+        while t-t0 < duration_sec:
+            precise_sleep(duration_sec-(t-t0)) # can still be quite bad if a thread switch happens while we sleep
+            t = time.monotonic()
+
+    def time(self) -> float:
+        """Get the current time, altered by the realtime factor."""
+        return time.monotonic() * self._realtime_factor
 
 class RosAdapter(BaseAdapter):
     """This class allows to control the execution of a ROS-based environment.
@@ -44,7 +62,8 @@ class RosAdapter(BaseAdapter):
     def __init__(   self,   stepLength_sec : float = 0.001,
                             forced_ros_master_uri : Union[str, None] = None,
                             maxObsDelay = float("+inf"),
-                            blocking_observation = False):
+                            blocking_observation = False,
+                            walltime_factor : float = 1.0):
         """Initialize the Simulator controller.
 
         Raises
@@ -78,21 +97,14 @@ class RosAdapter(BaseAdapter):
         self._maxObsAge = maxObsDelay
         self._blocking_observation = blocking_observation
         self._mmRosLauncher : adarl_ros_utils.ros_launch_utils.MultiMasterRosLauncher = None
+        self._wall_clock = AlteredClock(realtime_factor=walltime_factor)
 
 
     def run(self, duration_sec : float):
         if self._use_sim_time:
             rospy.sleep(duration_sec)
         else:
-            t0 = time.monotonic()
-            long_sleep = max(0,duration_sec-0.2)
-            if long_sleep>0:
-                time.sleep(long_sleep)
-            t = time.monotonic()
-            while t-t0 < duration_sec:
-                precise_sleep(duration_sec-(t-t0)) # can still be quite bad if a thread switch happens while we sleep
-                t = time.monotonic()
-
+            self._wall_clock.sleep(duration_sec)
 
     def step(self) -> float:
         """Wait for the step time to pass."""
@@ -177,9 +189,9 @@ class RosAdapter(BaseAdapter):
         adarl.utils.sigint_handler.fix_sigint_handler()
 
         if self._use_sim_time:
-            self._startup_env_time = rospy.get_time() #Will be overwritten by resetWorld
+            self._startup_env_time = rospy.get_time()
         else:
-            self._startup_env_time = time.monotonic()
+            self._startup_env_time = self._wall_clock.time()
         self._last_step_end_env_time = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
 
         self._imageSubscribers = []
@@ -426,7 +438,7 @@ class RosAdapter(BaseAdapter):
         if self._use_sim_time:
             t = rospy.get_time() - self._startup_env_time
         else:
-            t = time.monotonic() - self._startup_env_time
+            t = self._wall_clock.time() - self._startup_env_time
         return t
 
 

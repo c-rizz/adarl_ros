@@ -169,8 +169,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         enable_filters = True,
                         position_commands_stiffness : float = 100.0,
                         position_commands_damping : float = 10.0,
-                        is_simulated : bool | None = False):
-        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation)
+                        is_simulated : bool | None = False,
+                        walltime_factor : float = 1.0):
+        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation, walltime_factor=walltime_factor)
         self._is_floating_base = is_floating_base
         self._model_name = model_name
         self._reference_frame = reference_frame
