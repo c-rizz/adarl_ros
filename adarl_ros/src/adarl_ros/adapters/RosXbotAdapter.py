@@ -226,7 +226,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
         self._robot_interface = xbot.RobotInterface(cfg)
-        ggLog.info(get_system_recap_string(self._robot_interface))
+        # ggLog.info(get_system_recap_string(self._robot_interface))
         set_filters(True)
         self._setup_joint_control(control_mask=255)
         self._switch_control(self._enable_filters)
