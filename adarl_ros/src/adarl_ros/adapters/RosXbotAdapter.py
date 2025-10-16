@@ -356,7 +356,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def setJointsImpedanceCommand(self, joint_impedances_pvesd : Mapping[Tuple[str,str],Tuple[float,float,float,float,float]] | th.Tensor,
                                         delay_sec : float = 0) -> None:
         if delay_sec!=0.0:
-            raise NotImplementedError()
+            raise NotImplementedError("Impedance command delay is not supported")
         
         if isinstance(joint_impedances_pvesd, th.Tensor):
             joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
