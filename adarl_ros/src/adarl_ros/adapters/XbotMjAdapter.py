@@ -47,12 +47,16 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         jpos_cmd_max_acc = {},
         jpos_cmd_max_acc_default = 0.0,
         enable_filters = True,
-        base_link_name: str = "base_link"):
+        base_link_name: str = "base_link",
+        render_to_file: bool = False,
+        render_fps: float = 60):
 
         """Initialize the Simulator.
 
         """
         self._base_link_name=base_link_name
+        self._render_to_file=render_to_file
+        self._render_fps=render_fps
         self._model_fpath=model_fpath
         self._xbot2_config_path=xbot2_config_path
         self._headless=headless
@@ -129,10 +133,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             base_link_name=self._base_link_name,
             match_rt_factor=True,
             rt_factor_trgt=1.0,
-            render_to_file = True,
+            render_to_file = self._render_to_file,
             custom_camera_name = "custom_camera",
             render_base_path = "/tmp",
-            render_fps = 60.0
+            render_fps = self._render_fps
         )
 
         reset_ok=self._xmj_sim.reset()
