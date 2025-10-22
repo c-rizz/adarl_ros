@@ -34,8 +34,7 @@ from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
 from adarl.adapters.BaseAdapter import JointName,  LinkName
 import adarl.utils.session
 
-
-
+from transforms3d.quaternions import mat2quat
 
 
 # ------------------------------------------------------------------------------------------
@@ -207,9 +206,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         jpos_cmd_max_vel_default = 0.0,
                         jpos_cmd_max_acc = {},
                         jpos_cmd_max_acc_default = 0.0,
-                        enable_filters = True):
+                        enable_filters = True,
+                        imu_link: str = "imu_link",
+                        base_link : str = "imu_link"):
         super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation)
         self._is_floating_base = is_floating_base
+        self._imu_link= imu_link
+        self._base_link = base_link
         self._model_name = model_name
         self._reference_frame = reference_frame
         self._torch_device = torch_device
@@ -252,7 +255,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._xbot_task_stats=msg.task_stats
         
     def _imu_device_callback(self, msg):
-
+        # read imu data from xbot topic
         self._imu_frame = msg.header.frame_id
 
         orientation = msg.orientation
@@ -334,15 +337,24 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._jdi_subscriber = rospy.Subscriber(joint_dev_topicname, JointDeviceInfo, 
             self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {joint_dev_topicname}")
-
-        imu_topic_name = "/xbotcore/imu/imu_link"
-        self._imu_frame="none"
-        self._imu_q_last=np.zeros((1, 4))
-        self._imu_q_last[:, 0]=1.0
-        self._imu_omega_last=np.zeros((1, 3))
-        self._imu_linacc_last=np.zeros((1, 3))
-        self._imu_subscriber = rospy.Subscriber(imu_topic_name, Imu, self._imu_device_callback, queue_size=1)
         
+        # imu_topic_name = "/xbotcore/imu/"+self._imu_link
+        # self._imu_frame="none"
+        # self._imu_q_last=np.zeros((1, 4))
+        # self._imu_q_last[:, 0]=1.0
+        # self._imu_omega_last=np.zeros((1, 3))
+        # self._imu_linacc_last=np.zeros((1, 3))
+        # self._imu_subscriber = rospy.Subscriber(imu_topic_name, Imu, self._imu_device_callback, queue_size=1)
+        
+        self._xbot_imu = self._robot_interface.getImu()[self._imu_link] # we assume there's only one imu
+        self._R_imu_link=self._robot_interface.model().getPose(self._base_link, self._imu_link).matrix()[:3,:3] # we assume a static tranform
+
+        # base link state (defaults to imu_link), updated when imu callback is called
+        self._base_q_last=np.zeros((1, 4))
+        self._base_q_last[:, 0]=1.0
+        self._base_omega_last=np.zeros((1, 3))
+        self._base_linacc_last=np.zeros((1, 3))
+
         # preallocating cmds
         self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._vrefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
@@ -353,9 +365,24 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def set_filters(self, set_enabled : bool, profile_name = "safe"):
         set_filters(set_enabled=set_enabled,profile_name=profile_name)
     
-    def get_imu_data(self):
-        return (self._imu_frame, self._imu_q_last, self._imu_omega_last, self._imu_linacc_last)
+    # def get_imu_data(self):
+    #     return (self._imu_frame, self._imu_q_last, self._imu_omega_last, self._imu_linacc_last)
     
+    def get_base_link_state(self):
+        return (self._base_link, self._base_q_last, self._base_omega_last, self._base_linacc_last)
+    
+    def read_imu_data(self):
+        
+        # update base link state (if not provided == imu_link)
+        R_world_imu=self._xbot_imu.getOrientation()
+        R_world_link=R_world_imu@self._R_imu_link # orientation of base link wrt world frame
+        omega_imu_loc=self._xbot_imu.getAngularVelocity() # IMU local !!
+        
+        self._base_q_last[:, :]=mat2quat(R_world_link) # IMPORTANT: returns quaterion in w,x,y,z order    
+        self._base_omega_last[:, :]= self._R_imu_link.T @ omega_imu_loc # rotate from IMU to base link frame
+        self._base_linacc_last[:, :]=self._R_imu_link.T @ self._xbot_imu.getLinearAcceleration() # we would need to account
+        # for linear velocity and angular acc to do it properly (accurate only if imu==base_link)
+        
     def _is_xbot_task_running(self,task_name: str):
         task_id=self._xbot_task_info_map[task_name]
         return self._xbot_task_stats[task_id].state=="Running"
@@ -456,7 +483,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # jvel = self._robot_interface.getJointVelocity()
         jvel = self._robot_interface.getMotorVelocity()
         jeff = self._robot_interface.getJointEffort()
-
 
         ret : dict[tuple[str,str], JointState]= {}
         for full_joint_name in requestedJoints:
@@ -811,4 +837,24 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     
     def get_joints_state_step_stats(self):
         raise NotImplementedError()
+    
+    def quat2rotation(self, qwijk: np.ndarray):
+
+        q_w, q_i, q_j, q_k = qwijk[0, 0], qwijk[0, 1], qwijk[0, 2], qwijk[0, 3]
+
+        R=np.zeros((3,3))
+        R[0, 0] = 1 - 2 * (q_j ** 2 + q_k ** 2)
+        R[0, 1] = 2 * (q_i * q_j - q_k * q_w)
+        R[0, 2] = 2 * (q_i * q_k + q_j * q_w)
+        
+        R[1, 0] = 2 * (q_i * q_j + q_k * q_w)
+        R[1, 1] = 1 - 2 * (q_i ** 2 + q_k ** 2)
+        R[1, 2] = 2 * (q_j * q_k - q_i * q_w)
+        
+        R[2, 0] = 2 * (q_i * q_k - q_j * q_w)
+        R[2, 1] = 2 * (q_j * q_k + q_i * q_w)
+        R[2, 2] = 1 - 2 * (q_i ** 2 + q_j ** 2)
+
+        return R
+
 
