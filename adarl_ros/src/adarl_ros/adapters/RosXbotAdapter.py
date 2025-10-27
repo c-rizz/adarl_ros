@@ -256,7 +256,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
 
-        self._impedance_ramp_time=3.0
+        self._impedance_ramp_time=5.0
         self._impedance_ramp_tinysleep=0.005
 
     def _joint_device_info_callback(self, msg):
@@ -494,7 +494,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         jpos = self._robot_interface.getJointPosition()
         # jvel = self._robot_interface.getJointVelocity()
-        jvel = self._robot_interface.getMotorVelocity()
+        jvel = self._robot_interface.getMotorVelocity() # cleaner signal on motor side (more resolution)
         jeff = self._robot_interface.getJointEffort()
 
         ret : dict[tuple[str,str], JointState]= {}
