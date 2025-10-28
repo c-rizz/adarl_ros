@@ -256,7 +256,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
 
-        self._impedance_ramp_time=0.5 # [s]
+        self._impedance_ramp_time=1.0 # [s]
         self._impedance_ramp_tinysleep=0.005
 
     def _joint_device_info_callback(self, msg):
