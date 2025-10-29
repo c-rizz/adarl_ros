@@ -17,7 +17,8 @@ from threading import RLock, Condition
 from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
 from adarl.adapters.StandaloneRealAdapter import StandaloneRealAdapter
 
-from xbotpy.zmq_client2 import XbotZmqClient, JointCommand
+import pyxbot
+from pyxbot.zmq_client import XbotZmqClient, JointCommand
 
 
 
@@ -136,6 +137,7 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         self._reference_frame = reference_frame
         self._torch_device = torch_device
         self._robot_urdf = robot_urdf
+        self._started = False
         # self._joint_cmd_fallback_by_jid = {}
         # self._fallback_cmd_stiffness = fallback_cmd_stiffness
         # self._fallback_cmd_damping = fallback_cmd_damping
@@ -146,7 +148,7 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         self._is_safety_triggered = False
         self._position_command_stiffness = position_commands_stiffness
         self._position_command_damping = position_commands_damping
-        self._next_commanded_joint_impedances_by_name : dict[tuple[str,str], Tuple[float,float,float,float,float] | th.Tensor]= {}
+        self._next_commanded_joint_impedances_by_name : dict[tuple[str,str], th.Tensor]= {}
         self._next_commanded_joint_positions : Dict[Tuple[str,str],Tuple[float,float,float]] = {}
         # joint trajectories are ndarrays listing waypoints of format (time, position, velocuty, acceleration)
         self._commanded_joint_trajs_tpva : Dict[Tuple[str,str],np.ndarray]= {}
@@ -176,6 +178,13 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
     def is_simulated(self):
         return self._is_simulated
 
+    def control_period(self):
+        return self._control_dt
+        
+    def _thtens(self, arr: np.ndarray) -> th.Tensor:
+        """Convert a numpy array to a torch tensor on the configured device."""
+        return th.as_tensor(arr, device=self._torch_device)
+    
     @override
     def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
         self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
@@ -187,26 +196,12 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         self._xbot_zmq_client.start()
         detected_joint_names = self._xbot_zmq_client.get_joint_names()
         self._joints_num = len(detected_joint_names)
-
-        
-
-        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
-        self._robot_interface = xbot.RobotInterface(cfg)
-        # ggLog.info(get_system_recap_string(self._robot_interface))
-        set_filters(True)
-        self._setup_joint_control(control_mask=255)
-        self._switch_control(self._enable_filters)
-        enabled_joint_names = self._robot_interface.getEnabledJointNames() # this is different from robot.model().getEnabledJointNames()
-        self._joints_num = len(enabled_joint_names)
-        self._xbotjname_to_jid = {jname : enabled_joint_names.index(jname) for jname in enabled_joint_names}
+        self._xbotjname_to_jid = {jname : jid for jid, jname in enumerate(detected_joint_names)}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
-
-        ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
+        ggLog.info(f"ZmqXBotAdapter: found joints: {list(self._xbotjname_to_jid.keys())}")
 
         self._jimpedance_controlled_joints_jids = np.array([self._xbotjname_to_jid[jn] for model_name,jn in self._jimpedance_controlled_joints])
-        topic_name = "/xbotcore/joint_device_info"
-        self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
-        ggLog.info(f"Subscribed to {topic_name}")
+        self._started = True
 
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
@@ -226,24 +221,22 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
     def get_impedance_controlled_joints(self) -> list[tuple[str,str]]:
         return self._jimpedance_controlled_joints
 
-    def get_joint_device_info(self, after_env_time : float = float("-inf"), timeout_wall : float = 30.0) -> JointDeviceInfo | None:
-        with self._joint_device_info_cv:
-            self._joint_device_info_cv.wait_for(lambda: self._last_joint_device_info_time >= after_env_time, timeout=timeout_wall)
-            ret = self._last_joint_device_info
-        return ret
-
     @override
-    def getJointsState(self, requestedJoints : List[Tuple[str,str]] | None = None) -> Dict[Tuple[str,str],JointState] | th.Tensor:
-        if not self._listenersStarted:
+    def getJointsState(self, requestedJoints : List[Tuple[str,str]] | None = None) -> th.Tensor:
+        if not self._started:
             raise RuntimeError("called getJointsState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_joints, and then call startController")
 
         if requestedJoints is None:
-            return_tensor=True
-            requestedJoints = self._jointsToObserve
-        else:
-            return_tensor = False
+            requestedJoints = self._monitored_joints
 
-        self._robot_interface.sense(update_model=False)
+        for model, jname in requestedJoints:
+            if model != self._model_name:
+                raise RuntimeError(f"Requested joint for model different from the monitored one (asked '{model, jname}', but have '{self._model_name}')")
+        jids = [self._xbotjname_to_jid[jname] for model, jname in requestedJoints]
+        jnames = [jname for model, jname in requestedJoints]
+        self._xbot_zmq_client.sense()
+
+        joints_pve = self._xbot_zmq_client.get_joints_state(jnames).pve()
 
         #TODO: get the delay time somehow
         # obsDelay = float("+inf")
@@ -253,70 +246,11 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         #     obsDelay = self._robot_interface.getTime() - self._robot_interface.getTimestampRx()            
         # self._jointStateMsgAgeAvg.addValue(obsDelay)
 
-        jpos = self._robot_interface.getJointPosition()
-        jvel = self._robot_interface.getJointVelocity()
-        jeff = self._robot_interface.getJointEffort()
-
-
-        ret : dict[tuple[str,str], JointState]= {}
-        for full_joint_name in requestedJoints:
-            model, jname = full_joint_name
-            if model != self._model_name:
-                raise RuntimeError(f"Requested joint for model different from the monitored one (asked '{model, jname}', but have '{self._model_name}')")
-            jid = self._xbotjname_to_jid[jname]
-            ret[full_joint_name] = JointState(position=th.as_tensor(jpos[jid]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
-                                                rate=th.as_tensor(jvel[jid]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
-                                                effort=th.as_tensor(jeff[jid]).to(device=self._torch_device, non_blocking=True, dtype=th.float32))
-        if self._torch_device.type == "cuda":
-            # sync non_blocking cuda transfers
-            th.cuda.synchronize(self._torch_device)
-        if return_tensor:
-            return th.as_tensor([[ret[n].position,ret[n].rate,ret[n].effort] for n in self._jointsToObserve]).view(size=(len(self._jointsToObserve),3))
-        else:
-            return ret
+        return th.as_tensor(joints_pve).view(size=(len(requestedJoints),3)).to(device=self._torch_device, dtype=th.float32)
 
     @override
     def getLinksState(self, requestedLinks : List[Tuple[str,str]], use_com_pose = False) -> Dict[Tuple[str,str],LinkState]:
-        if not self._listenersStarted:
-            raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_links, and then call startController")
-        if use_com_pose:
-            raise NotImplementedError(f"use_com_frame not supported")
-        #print("self._linksToObserve = "+str(self._linksToObserve))
-        for l in requestedLinks:
-            if l not in self._linksToObserve:
-                raise RuntimeError(f"Requested link '{l}' that was not requested in set_monitored_links (only observing {self._linksToObserve})")
-
-        self._robot_interface.sense(update_model=True)
-        #TODO: get the delay time somehow
-        # obsDelay = float("+inf")
-        # while obsDelay > self._maxObsAge:
-        #     self.run(0.001)
-        #     self._robot_interface.sense(update_model=True)
-        #     obsDelay = self._robot_interface.getTime() - self._robot_interface.getTimestampRx()            
-        # self._jointStateMsgAgeAvg.addValue(obsDelay)
-
-        model = self._robot_interface.model()
-
-        ret = {}
-        for full_link_name in requestedLinks:
-            mname, lname = full_link_name
-            if mname != self._model_name:
-                raise RuntimeError(f"Requested link for model different from the monitored one (asked '{mname, lname}', but have '{self._model_name}')")
-
-            lpose = model.getPose(lname, self._reference_frame)
-            ltwist = model.getRelativeVelocityTwist(lname, self._reference_frame)
-
-            ls = LinkState(position_xyz=th.as_tensor(lpose.translation).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
-                           orientation_xyzw=th.as_tensor(lpose.quaternion).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
-                           pos_com_velocity_xyz=th.as_tensor(ltwist[:3]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
-                           ang_velocity_xyz=th.as_tensor(ltwist[3:]).to(device=self._torch_device, non_blocking=True, dtype=th.float32))
-            ret[full_link_name] = ls
-            
-        if self._torch_device.type == "cuda":
-            # sync non_blocking cuda transfers
-            th.cuda.synchronize(self._torch_device)
-
-        return ret
+        raise RuntimeError("getLinksState not yet implemented for ZmqXbotAdapter") # Could at least be implemented for robot links, relative to the robot
 
     @override
     def setJointsImpedanceCommand(self, joint_impedances_pvesd : Mapping[Tuple[str,str],Tuple[float,float,float,float,float]] | th.Tensor,
@@ -329,22 +263,20 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         elif isinstance(joint_impedances_pvesd, Mapping):
             joint_impedances_pvesd_dict = joint_impedances_pvesd
 
+        if self.is_safety_triggered():
+            ggLog.warn(f"Commanding impedance, but safety is triggered")
         
-        # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
-        jdi = self.get_joint_device_info(after_env_time=float("-inf"))
-        if jdi is not None and jdi.mask == 0:
-            ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
         for full_jname, jcmd in joint_impedances_pvesd_dict.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
                 raise RuntimeError(f"Commanded joint impedance for model different from the controlled one (asked '{model_name, jname}', but have '{self._model_name}')")
-            self._next_commanded_joint_impedances_by_name[full_jname] = jcmd
+            self._next_commanded_joint_impedances_by_name[full_jname] = th.as_tensor(jcmd)
 
     def _apply_commanded_joint_impedances(self):
         self.apply_joint_impedances(self._next_commanded_joint_impedances_by_name)
 
     @override
-    def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor]):
+    def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str], th.Tensor] | th.Tensor):
         # ggLog.info(f"applying joint impedances {joint_impedances_pvesd}")
         if len (joint_impedances_pvesd)==0:
             return
@@ -354,37 +286,37 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         elif isinstance(joint_impedances_pvesd, Mapping):
             joint_impedances_pvesd_dict = joint_impedances_pvesd
 
-        commanded_joint_impedances_by_jid = {}
+        commanded_joint_impedances_by_jid : dict[int,np.ndarray] = {}
         for full_jname, jcmd in joint_impedances_pvesd_dict.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
                 raise RuntimeError(f"Commanded joint impedance for model different from the controleld one (asked '{model_name, jname}', but have '{self._model_name}')")
             jid = self._xbotjname_to_jid[jname]
-            commanded_joint_impedances_by_jid[jid] = jcmd
+            commanded_joint_impedances_by_jid[jid] = jcmd.numpy()
         
         prefs, vrefs, erefs, pgains, vgains = (np.zeros(shape=(self._joints_num,), dtype=np.float64) 
                                                for _ in range(5))
 
-        curr_pos = self._robot_interface.getJointPosition()
-        used_fallback = False
-        for jid in range(self._joints_num):
-            cmd = commanded_joint_impedances_by_jid.get(jid,None)
-            if cmd is None and self._allow_fallback:
-                used_fallback = True
-                ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
-                # keeps current position
-                cmd = (curr_pos[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
-            prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
-        if used_fallback:
-            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
-            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
+        commanded_joint_names = [self._jid_to_xbotjname[jid] for jid in commanded_joint_impedances_by_jid.keys()]
+        commanded_pvesd = np.stack([np.array(pvesd) for pvesd in commanded_joint_impedances_by_jid.values()], axis = 1)
+        # curr_pos = self._xbot_zmq_client.getJointPosition()
+        # used_fallback = False
+        # for jid in range(self._joints_num):
+        #     cmd = commanded_joint_impedances_by_jid.get(jid,None)
+        #     if cmd is None and self._allow_fallback:
+        #         used_fallback = True
+        #         ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
+        #         raise RuntimeError("Missing command for joint {self._jid_to_xbotjname[jid]} ({jid})")
+        #         # keeps current position
+        #         cmd = (curr_pos[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
+        #     prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
+        # if used_fallback:
+        #     ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
+        #     ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
 
-        self._robot_interface.setStiffness(pgains)
-        self._robot_interface.setDamping(vgains)
-        self._robot_interface.setPositionReference(prefs)
-        self._robot_interface.setVelocityReference(vrefs)
-        self._robot_interface.setEffortReference(erefs)
-        self._robot_interface.move()
+        self._xbot_zmq_client.send_command(JointCommand(joint_names = commanded_joint_names,
+                                                        pvesd = commanded_pvesd,
+                                                        ctrl_mode = np.full(shape=(len(commanded_joint_names),), fill_value=63, dtype=np.uint32)))
 
         self._last_sent_pvesd = np.stack([prefs,vrefs,erefs,pgains,vgains], axis = 1)
         # ggLog.info(f"Sent robot_interface command")
@@ -403,13 +335,15 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
 
     def _apply_commanded_joint_positions(self):
         jimp_pvesd_cmds : Dict[Tuple[str,str],Tuple[float,float,float,float,float]] = {}
-        js = self.getJointsState(list(self._next_commanded_joint_positions.keys()))
+        joints = list(self._next_commanded_joint_positions.keys())
+        js_pve : th.Tensor = self.getJointsState(joints)
+        js_dict = joints_state_dict = {jn : pve for jn, pve in zip(joints, js_pve)}
         for jn,p_ref_velsc_accsc in self._next_commanded_joint_positions.items():
             # just to compute the duration
             p_ref, velocity_scaling, acceleration_scaling = p_ref_velsc_accsc
             traj_tpva = build_1D_vramp_trajectory(t0 = 0.0,
-                                                p0 = js[jn].position.item(),
-                                                v0 = js[jn].rate.item(),
+                                                p0 = js_dict[jn][0].item(),
+                                                v0 = js_dict[jn][1].item(),
                                                 pf = p_ref,
                                                 ctrl_freq_hz = 10, # we just use the first sample anyway
                                                 max_vel=self._jpos_cmd_max_vel.get(jn, self._jpos_cmd_max_vel_default)*velocity_scaling,
@@ -456,83 +390,10 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
 
         return step_duration
 
-    def _switch_control(self, switch_on : bool, timeout_s : float = 5.) -> bool:
-        # for i in range(20):
-        #     time.sleep(1)
-        #     print(i)
-        # ggLog.info(f"switch_xbotros_control({switch_on})")
-        switch_srv_name = "/xbotcore/ros_control/switch"
-        state_srv_name = "/xbotcore/ros_control/state"
-        rospy.wait_for_service(switch_srv_name, timeout = timeout_s)
-        ros_ctrl_switch = rospy.ServiceProxy(switch_srv_name, SetBool)
-        # ggLog.info(f"Created service proxy for {switch_srv_name}")
-        rospy.wait_for_service(state_srv_name, timeout = timeout_s)
-        ros_ctrl_state = rospy.ServiceProxy(state_srv_name, PluginStatus)
-        # ggLog.info(f"Created service proxy for {state_srv_name}")
-
-        t0 = time.monotonic()
-        switched_on = not switch_on
-        status = None
-        while switched_on != switch_on:
-            if time.monotonic()-t0>timeout_s:
-                raise TimeoutError(f"Timed out waiting for xbot ros_control switch. Status = '{status}'")
-            try:
-                # ggLog.info(f"Calling {state_srv_name}")
-                resp = ros_ctrl_state()
-            except rospy.ServiceException as e:
-                ggLog.warn(f"ros_ctrl_state call failed: {e}")
-                raise e
-            status = resp.status
-            switched_on = resp.status == "Running"
-            # ggLog.info(f"ros_control state: {resp}")
-            if switched_on != switch_on:
-                try:
-                    # ggLog.info(f"ros_ctrl_switch({switch_on})")
-                    resp = ros_ctrl_switch(switch_on) # DOES NOT WORK IF THE SIMULATION IS PAUSED. A sadly, services have no timeouts (https://github.com/ros/ros_comm/pull/2144)
-                except rospy.ServiceException as e:
-                    ggLog.info(f"ros_ctrl_switch call failed: {e}")
-                    raise e
-                # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
-            time.sleep(0.5)
-        ggLog.info(f"switched ros_control to state: {resp}")
-        return switched_on
-
-    def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
-        control_mask_srv_name = "/xbotcore/joint_master/set_control_mask"
-        rospy.wait_for_service(control_mask_srv_name, timeout=timeout_s)
-        control_mask_srv = rospy.ServiceProxy(control_mask_srv_name, SetControlMask)
-        t0 = time.monotonic()
-        current_mask = None
-        while current_mask!=control_mask:
-            if time.monotonic()-t0>timeout_s:
-                raise TimeoutError(f"Timed out waiting for control_mask set. Status = '{current_mask}'")
-            topic_name = "/xbotcore/joint_device_info"
-            jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
-            if not isinstance(jdi, JointDeviceInfo):
-                raise RuntimeError(f"Unexpected type received from {topic_name}, should be JointDeviceInfo but it's {type(jdi)}")
-            current_mask = jdi.mask
-            if jdi.mask!=control_mask:
-                # ggLog.info(f"Setting control mask to {control_mask}")
-                resp = control_mask_srv(ctrl_mask = control_mask)
-                if not resp.success:
-                    raise RuntimeError(f"Failed to set control mask: {resp}")
-        ggLog.info(f"Control mask set to {jdi.mask}")
-        return jdi.mask
-
     @override
     def initialize_for_episode(self):
         super().initialize_for_episode()
         self.clear_commands()
-        self._last_joint_device_info_time = float("-inf")
-        self._last_joint_device_info = None
-        if self.is_simulated():
-            req_mask = 255
-            mask = self._setup_joint_control(control_mask = req_mask)
-            if mask != req_mask:
-                raise RuntimeError(f"Failed to set control mask, wanted {req_mask}, got {mask}")
-            switched_on = self._switch_control(True)
-            if not switched_on:
-                raise RuntimeError(f"Failed to switch on control.")
 
     @override
     def setJointsPositionCommand(self, jointPositions : Dict[Tuple[str,str],float],
@@ -563,7 +424,9 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
             velocity_scaling = 1.0
         if acceleration_scaling is None:
             acceleration_scaling = 1.0
-        js = self.getJointsState(list(jointPositions.keys()))
+        joints = list(jointPositions.keys())
+        js_pve = self.getJointsState(joints)
+        js_dict = {jn : pve for jn, pve in zip(joints, js_pve)}
         last_refs = self.get_current_joint_impedance_command()
         last_refs_dict = {self._jimpedance_controlled_joints[i]:last_refs[i] for i in range(len(self._jimpedance_controlled_joints))}
         max_traj_duration = 0
@@ -573,7 +436,7 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
             vs = joint_velocity_scaling.get(jn, velocity_scaling)
             traj_tpva = build_1D_vramp_trajectory(  t0 = 0.0,
                                                     p0 = last_refs_dict[jn][0].item(),
-                                                    v0 = js[jn].rate.item(),
+                                                    v0 = js_dict[jn][0].item(),
                                                     pf = p_ref,
                                                     ctrl_freq_hz = 1000.0,
                                                     max_vel=self._jpos_cmd_max_vel.get(jn, self._jpos_cmd_max_vel_default)*vs,
@@ -593,9 +456,9 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         timeout_wall = timeout_env*20
         if max_traj_duration > max_time_s:
             raise RuntimeError(f"Computed trajectory is excessively long, would last {max_traj_duration}s, max_time is set to {max_time_s}s. \n"
-                               f"Joint names           : {[jn for jn,ji in js.items()]}\n"
-                               f"Initial joint position: "+str([f"{ji.position.item(): 2.4f}" for jn,ji in js.items()])+"\n"
-                               f"Initial joint velocity: "+str([f"{ji.rate.item(): 2.4f}" for jn,ji in js.items()])+"\n"
+                               f"Joint names           : {[jn for jn,ji in js_dict.items()]}\n"
+                               f"Initial joint position: "+str([f"{jpve[0].item(): 2.4f}" for jn,jpve in js_dict.items()])+"\n"
+                               f"Initial joint velocity: "+str([f"{jpve[1].item(): 2.4f}" for jn,jpve in js_dict.items()])+"\n"
                                f"Target  joint position: "+str([f"{jp: 2.4f}" for jp in jointPositions.values()])+"\n"
                                f"Durations {[(jn,traj_tpva[-1][0]) for jn,traj_tpva in joint_trajs.items()]}\n"
                                f"Raise the max_time if it is actually ok.")
@@ -609,7 +472,7 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         t0_env = self.getEnvTimeFromStartup()
         t0_wall = time.monotonic()
         js = self.getJointsState(list(jointPositions.keys()))
-        errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
+        errors = [jpve[0].item() - jointPositions[jn] for jn,jpve in js_dict.items()]
         reached_position = all([abs(e) < joint_position_tolerance for e in errors])
         elapsed_env_time = 0.0
         elapsed_wall_time = 0.0
@@ -617,16 +480,16 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         while not (reached_position or (stopped and elapsed_env_time>=max_traj_duration)):
             self.run(self._stepLength_sec)
             js = self.getJointsState(list(jointPositions.keys()))
-            errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
+            errors = [jpve[0].item() - jointPositions[jn] for jn,jpve in js_dict.items()]
             reached_position = all([abs(e) < joint_position_tolerance for e in errors])
-            stopped = all([abs(ji.rate.item())<joint_velocity_termination_threshold for ji in js.values()])
+            stopped = all([abs(jpve[1].item())<joint_velocity_termination_threshold for jpve in js_dict.values()])
             elapsed_env_time = self.getEnvTimeFromStartup() - t0_env
             elapsed_wall_time = time.monotonic() - t0_wall
             if elapsed_env_time > timeout_env:
                 self.clear_commands()
                 raise MoveFailError(f"Timed out waiting for sync joint move (env timeout {elapsed_env_time}>{timeout_env})\n"
                                     f"    target = {jointPositions}\n"
-                                    f"    joint state = {[ji.position.item() for jn,ji in js.items()]}\n"
+                                    f"    joint state = {[jpve[0].item() for jn,jpve in js_dict.items()]}\n"
                                     f"    errors = {errors}\n"
                                     f"    max_error = {max(errors)}\n"
                                     f"    tolerance = {joint_position_tolerance}")
@@ -637,15 +500,14 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
 
 
     def is_safety_triggered(self):
+        return False
         raise NotImplementedError()
     
-    def _get_current_refs_pvesd(self):
-        self._robot_interface.sense(update_references=True)
-        return np.stack([   self._robot_interface.getPositionReference(),
-                            self._robot_interface.getVelocityReference(),
-                            self._robot_interface.getEffortReference(),
-                            self._robot_interface.getStiffness(),
-                            self._robot_interface.getDamping()], axis = 1)
+    def _get_current_refs_pvesd(self) -> np.ndarray:
+        self._xbot_zmq_client.sense()
+        js : pyxbot.zmq_client.JointState = self._xbot_zmq_client.get_joints_state([jn[0] for jn in self._jimpedance_controlled_joints])
+        pvesd = js.pvesd_refs()
+        return pvesd
 
     @override
     def get_current_joint_impedance_command(self) -> th.Tensor:
@@ -687,12 +549,6 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         # ggLog.info(f"angvels = {angvels}")
         return th.stack(angvels)
     
-    def control_period(self):
-        return self._control_dt
-        
-    def _thtens(self, arr: np.ndarray) -> th.Tensor:
-        """Convert a numpy array to a torch tensor on the configured device."""
-        return th.as_tensor(arr, device=self._torch_device)
     
     def get_local_link_linear_acceleration(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
         imus = self._robot_interface.getImu()
