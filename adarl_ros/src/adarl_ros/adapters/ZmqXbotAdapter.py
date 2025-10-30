@@ -5,7 +5,8 @@ from typing import Dict, List, Tuple, Union, Optional, Sequence, Mapping
 
 import adarl.utils.dbg.ggLog as ggLog
 from adarl_ros.adapters.RosAdapter import RosAdapter
-from adarl.utils.utils import JointState, LinkState, RequestFailError, build_1D_vramp_trajectory, MoveFailError
+from adarl.utils.utils import JointState, LinkState, RequestFailError, build_1D_vramp_trajectory, MoveFailError, quat_mul_xyzw, th_quat_rotate
+from adarl.utils.robot_helpers import Robot
 import numpy as np
 
 from urdf_parser_py.urdf import URDF
@@ -129,14 +130,12 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
                         remote_ip : str ='localhost',
                         remote_port : int =5557,
                         remote_joint_state_port : int =5556,
-                        remote_cmd_port : int =5558,
-                        robot_urdf : str | None = None):
+                        remote_cmd_port : int =5558):
         super().__init__(stepLength_sec, walltime_factor=walltime_factor)
         self._is_floating_base = is_floating_base
         self._model_name = model_name
         self._reference_frame = reference_frame
         self._torch_device = torch_device
-        self._robot_urdf = robot_urdf
         self._started = False
         # self._joint_cmd_fallback_by_jid = {}
         # self._fallback_cmd_stiffness = fallback_cmd_stiffness
@@ -199,6 +198,8 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         self._xbotjname_to_jid = {jname : jid for jid, jname in enumerate(detected_joint_names)}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
         ggLog.info(f"ZmqXBotAdapter: found joints: {list(self._xbotjname_to_jid.keys())}")
+        self._robot_urdf = self._xbot_zmq_client.get_urdf()
+        self._robot_helper = Robot(model_urdf_string=self._robot_urdf)
 
         self._jimpedance_controlled_joints_jids = np.array([self._xbotjname_to_jid[jn] for model_name,jn in self._jimpedance_controlled_joints])
         self._started = True
@@ -234,7 +235,7 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
                 raise RuntimeError(f"Requested joint for model different from the monitored one (asked '{model, jname}', but have '{self._model_name}')")
         jids = [self._xbotjname_to_jid[jname] for model, jname in requestedJoints]
         jnames = [jname for model, jname in requestedJoints]
-        self._xbot_zmq_client.sense()
+        self._sense_if_needed()
 
         joints_pve = self._xbot_zmq_client.get_joints_state(jnames).pve()
 
@@ -372,10 +373,15 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
     def initialize_for_step(self):
         pass
 
+    def _sense_if_needed(self):
+        if self._sense_needed:
+            self._xbot_zmq_client.sense()
+            self._sense_needed = False
     @override
     def step(self) -> float:
         step_duration = super().step()
         self.clear_commands()
+        self._sense_needed = True
 
         # model = self._robot_interface.model()
         # model.setJointPosition(self._robot_interface.getJointPosition())
@@ -504,7 +510,7 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         raise NotImplementedError()
     
     def _get_current_refs_pvesd(self) -> np.ndarray:
-        self._xbot_zmq_client.sense()
+        self._sense_if_needed()
         js : pyxbot.zmq_client.JointState = self._xbot_zmq_client.get_joints_state([jn[0] for jn in self._jimpedance_controlled_joints])
         pvesd = js.pvesd_refs()
         return pvesd
@@ -515,42 +521,56 @@ class ZmqXbotAdapter(StandaloneRealAdapter, BaseJointImpedanceAdapter, BaseJoint
         # pvesd_by_name = {(mn,jn):ref_j_pvesd[self._xbotjname_to_jid[jn]] for mn,jn in self._jimpedance_controlled_joints}
         return th.as_tensor(ref_j_pvesd[self._jimpedance_controlled_joints_jids], device=self._torch_device, dtype=th.float32)
     
-    @override
-    def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
-        imus = self._robot_interface.getImu()
+    def _get_imus_for_links(self, requestedLinks : Sequence[tuple[str,str]]) -> dict[str, str]:
+        imus = self._xbot_zmq_client.get_imu_names()
         # print(f"imus = {imus}")
-        if requestedLinks is None:
-            requestedLinks = self._monitored_links
         req_links = [ln[1] for ln in requestedLinks] # Remove the model name
         ref_imus : dict[str,str] = {} # What imu to use for which links
         for rl in req_links:
+            # Assumes imu names and link names are the same
             ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
-        link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
-        orientation_mats = [link2imu_poses[ln].matrix()[:3,:3]*imus[ref_imus[ln]].getOrientation() for ln in req_links]
-        # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
-        gdirs = [-th.as_tensor(m[2,:]) for m in orientation_mats]
-        return th.stack(gdirs)
+        return ref_imus
+
+    @override
+    def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        self._sense_if_needed()
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        # ref_imus = self._get_imus_for_links(requestedLinks)
+        # needed_imus = list(set(ref_imus.values()))
+        # quats = self._xbot_zmq_client.getImuOrientation(needed_imus)
+        # poses_imu2world = {imu_name:quat for imu_name,quat in zip(needed_imus, quats)}
+
+        # for model_name,link_name in requestedLinks:
+        #     pose_link2imu = self._robot_helper.get_frame_poses_xyzxyzw(frames=[link_name], reference_frame=ref_imus[link_name])
+        #     quat_link2imu  = pose_link2imu[link_name][3:7]
+        
+        linksnum = len(requestedLinks)
+        requested_linknames = [ln[1] for ln in requestedLinks] # Remove the model name
+        imu_name = self._xbot_zmq_client.get_imu_names()[0] # use imu 0 for all links
+        poses_link2imu = self._robot_helper.get_frame_poses_xyzxyzw(frames=requested_linknames, reference_frame=imu_name)
+        quats_link2imu = th.stack([th.as_tensor(poses_link2imu[ln][3:7]) for ln in requested_linknames])
+        
+        quat_imu2world = th.as_tensor(self._xbot_zmq_client.getImuOrientation(imu_name)[0])
+        quats_link2world  = quat_mul_xyzw(quat_imu2world.expand(linksnum, 4), quats_link2imu)
+        gdirs = th_quat_rotate(th.as_tensor([0,0,-1,0]).expand(linksnum, 3), quats_link2world)
+        return gdirs
     
     @override
     def get_link_relative_angular_velocity(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
-        imus = self._robot_interface.getImu()
-        # print(f"imus = {imus}")
-        if requestedLinks is None:
-            requestedLinks = self._monitored_links
-        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
-        ref_imus : dict[str,str] = {} # What imu to use for which links
-        for rl in req_links:
-            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
-        link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
-        angvels = [self._thtens(np.matmul(link2imu_poses[ln].matrix()[:3,:3],imus[ref_imus[ln]].getAngularVelocity())) for ln in req_links]
-        # for ln in req_links:
-        #     ggLog.info(f"imu angvel = {imus[ref_imus[ln]].getAngularVelocity().transpose()}")
-        #     ggLog.info(f"link2imu_poses[ln].matrix()[:3,:3] = {link2imu_poses[ln].matrix()[:3,:3]}")
-        # ggLog.info(f"angvels = {angvels}")
-        return th.stack(angvels)
+        linksnum = len(requestedLinks)
+        requested_linknames = [ln[1] for ln in requestedLinks] # Remove the model name
+        imu_name = self._xbot_zmq_client.get_imu_names()[0] # use imu 0 for all links
+        poses_link2imu = self._robot_helper.get_frame_poses_xyzxyzw(frames=requested_linknames, reference_frame=imu_name)
+        quats_link2imu = th.stack([th.as_tensor(poses_link2imu[ln][3:7]) for ln in requested_linknames])
+        
+        imulocal_angvel = th.as_tensor(self._xbot_zmq_client.getImuAngularVelocity(imu_name)[0])
+        linklocal_angvel = th_quat_rotate(imulocal_angvel.expand(linksnum, 3), quats_link2imu)
+        return linklocal_angvel
     
     
     def get_local_link_linear_acceleration(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        raise NotImplementedError("get_local_link_linear_acceleration not yet implemented for ZmqXbotAdapter")
         imus = self._robot_interface.getImu()
         # print(f"imus = {imus}")
         if requestedLinks is None:
