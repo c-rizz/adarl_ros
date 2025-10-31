@@ -624,7 +624,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # ggLog.info(f"Sent robot_interface command")
 
     @override
-    def apply_joint_impedances_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor]):
+    def apply_joint_impedances_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
+                                impedance_ramp_time = None):
         """
         Linearly ramp stiffness (p gains) and damping (v gains) from current
         values to targets over the configured ramp time.
@@ -637,6 +638,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # quick return for empty input
         if len(joint_impedances_pvesd) == 0:
             return
+
+        if impedance_ramp_time is None:
+            impedance_ramp_time=self._impedance_ramp_time
 
         # convert tensor or mapping to dict keyed by (model_name,jname)
         if isinstance(joint_impedances_pvesd, th.Tensor):
