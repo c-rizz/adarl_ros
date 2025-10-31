@@ -256,7 +256,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
 
-        self._impedance_ramp_time=1.0 # [s]
+        self.impedance_ramp_time=2.0 # [s]
         self._impedance_ramp_tinysleep=0.005
 
     def _joint_device_info_callback(self, msg):
@@ -631,7 +631,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         values to targets over the configured ramp time.
 
         Per-instance attributes used (with defaults if missing):
-          - self._impedance_ramp_time      : desired ramp time in seconds
+          - self.impedance_ramp_time      : desired ramp time in seconds
           - self._impedance_ramp_max_time  : fallback ramp time in seconds
           - self._impedance_ramp_sleep     : sleep between iterations (s), default 0.005
         """
@@ -640,7 +640,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             return
 
         if impedance_ramp_time is None:
-            impedance_ramp_time=self._impedance_ramp_time
+            impedance_ramp_time=self.impedance_ramp_time
 
         # convert tensor or mapping to dict keyed by (model_name,jname)
         if isinstance(joint_impedances_pvesd, th.Tensor):
@@ -698,33 +698,21 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
 
         # If ramp time is zero, set targets immediately and return
-        if self._impedance_ramp_time <= 0.0:
-            final_p = [float(tp) for tp in target_stiffness]
-            final_v = [float(tv) for tv in target_damping]
-            # update internal stored arrays
-            for j in range(self._joints_num):
-                self._pgains[j] = final_p[j]
-                self._vgains[j] = final_v[j]
-            self._robot_interface.setStiffness(final_p)
-            self._robot_interface.setDamping(final_v)
-            self._robot_interface.setPositionReference(self._prefs)
-            self._robot_interface.setVelocityReference(self._vrefs)
-            self._robot_interface.setEffortReference(self._erefs)
-            self._robot_interface.move()
-            return
+        if self.impedance_ramp_time <= 0.0:
+            self.impedance_ramp_time=-self.impedance_ramp_time
 
         # Linear ramp: compute from initial to target over ramp_time
         start_time = time.perf_counter()
         initial_p = [float(x) for x in curr_stiffness]
         initial_v = [float(x) for x in curr_damping]
 
-        ggLog.info(f"Starting linear impedance ramp for {self._impedance_ramp_time:.3f}s (sleep {self._impedance_ramp_tinysleep:.4f}s)...")
+        ggLog.info(f"Starting linear impedance ramp for {self.impedance_ramp_time:.3f}s (sleep {self._impedance_ramp_tinysleep:.4f}s)...")
 
         try:
             while True:
                 now = time.perf_counter()
                 elapsed = now - start_time
-                frac = min(1.0, max(0.0, elapsed / self._impedance_ramp_time))
+                frac = min(1.0, max(0.0, elapsed / self.impedance_ramp_time))
 
                 # compute interpolated gains
                 interp_p = [0.0] * self._joints_num
