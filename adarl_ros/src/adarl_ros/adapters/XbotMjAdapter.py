@@ -47,14 +47,13 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         jpos_cmd_max_acc = {},
         jpos_cmd_max_acc_default = 0.0,
         enable_filters = True,
-        base_link_name: str = "base_link",
+        base_link: str = "base_link",
         render_to_file: bool = False,
         render_fps: float = 60):
 
         """Initialize the Simulator.
 
         """
-        self._base_link_name=base_link_name
         self._render_to_file=render_to_file
         self._render_fps=render_fps
         self._model_fpath=model_fpath
@@ -67,7 +66,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self._xmj_sim=None
         self._abs_sim_timer=0
         self._sim_time=0
-        sim_ok=self._init_simulation() # after this, all data from sim is available
+        sim_ok=self._init_simulation(base_link) # after this, all data from sim is available
         if not sim_ok:
             msg="Failed to initialize simulation!!"
             ggLog.error(f"{__class__}: {msg}")
@@ -95,7 +94,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                         jpos_cmd_max_vel_default=jpos_cmd_max_vel_default,
                         jpos_cmd_max_acc=jpos_cmd_max_acc,
                         jpos_cmd_max_acc_default=jpos_cmd_max_acc_default,
-                        enable_filters=enable_filters)
+                        enable_filters=enable_filters,
+                        base_link=base_link)
 
         joints_to_observe = [(model_name, joint) for joint in self._xmj_sim_jnt_names]
         self.set_monitored_joints(joints_to_observe)
@@ -122,7 +122,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     def sim_is_running(self):
         return self._xmj_sim.is_running()
 
-    def _init_simulation(self):
+    def _init_simulation(self, base_link: str):
         self._xmj_sim = XBotMjSim(
             model_fname=self._model_fpath,
             xbot2_config_path=self._xbot2_config_path,
@@ -130,7 +130,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
             manual_stepping=True,
             init_steps=self._init_steps,
             timeout=self._timeout_ms, # [ms]
-            base_link_name=self._base_link_name,
+            base_link_name=base_link,
             match_rt_factor=True,
             rt_factor_trgt=1.0,
             render_to_file = self._render_to_file,
