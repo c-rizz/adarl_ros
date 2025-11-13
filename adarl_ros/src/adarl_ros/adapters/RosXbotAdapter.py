@@ -44,25 +44,40 @@ import math
 
 
 
-def build_xbot_cfg(is_floating_base):
+def build_xbot_cfg(is_floating_base, 
+            urdf: str = None, 
+            srdf: str= None):
     """
     A function to construct the xbotinterface config object from ros
     """
     t0 = time.monotonic()
-    timeout=30
+    timeout=10.0
     retry_freq=1.5
     robot_description_name='/xbotcore/robot_description'
     semantic_description_name='/xbotcore/robot_description_semantic'
-    while True:
-        urdf = rospy.get_param(robot_description_name, default=None) # type: ignore
-        if urdf is not None:
-            break
-        if time.monotonic() - t0 > timeout: # retry for max timeout secs
-            raise TimeoutError()
-        time.sleep(retry_freq)
-        ggLog.warn(f"build_xbot_cfg: could not get robot description parameter at \"{robot_description_name}\"! Trying again...")
 
-    srdf = rospy.get_param(semantic_description_name) # type: ignore
+    if urdf is None: # get from robot description
+        while True:
+            urdf = rospy.get_param(robot_description_name, default=None) # type: ignore
+            if urdf is not None:
+                break
+            if time.monotonic() - t0 > timeout: # retry for max timeout secs
+                raise TimeoutError()
+            time.sleep(retry_freq)
+            ggLog.warn(f"build_xbot_cfg: could not get robot description parameter at \"{robot_description_name}\"! Trying again...")
+
+    if srdf is None: # get from robot description
+        while True:
+            srdf = rospy.get_param(semantic_description_name)
+            if srdf is not None:
+                break
+            if time.monotonic() - t0 > timeout: # retry for max timeout secs
+                raise TimeoutError()
+            time.sleep(retry_freq)
+            ggLog.warn(f"build_xbot_cfg: could not get robot semantic description parameter at \"{semantic_description_name}\"! Trying again...")
+
+    # type: ignore
+
     if not isinstance(urdf, str):
         raise RuntimeError(f"URDF is not a string, it's a {type(urdf)}")
     if not isinstance(srdf, str):
@@ -298,9 +313,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def fallback_damping(self):
         return self._fallback_cmd_damping
 
-    def startup(self):
+    def startup(self, 
+        urdf: str = None, 
+        srdf: str= None):
         super().startup()
-        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
+        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base, urdf=urdf, srdf=srdf)
 
         import time
         wait_for_sec=1.5 # [s]

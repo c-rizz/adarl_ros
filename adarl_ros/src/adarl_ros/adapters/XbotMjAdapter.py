@@ -226,10 +226,12 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         # self.clear_commands()
         return self._sim_time-stime_before
     
-    def startup(self):
-        super().startup()
+    def startup(self, 
+        urdf: str = None, 
+        srdf: str= None):
+        reset_ok=self._xmj_sim.reset()
+        super().startup(urdf=urdf, srdf=srdf)
         rospy.loginfo("ROS time is "+str(rospy.get_time())+" pid = "+str(os.getpid()))
-        self.resetWorld()
 
     def xmj_env(self):
         return self._xmj_sim
