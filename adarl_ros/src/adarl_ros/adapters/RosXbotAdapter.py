@@ -589,8 +589,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         
         # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
         jdi = self.get_joint_device_info(after_env_time=float("-inf"))
-        if jdi is not None and jdi.mask == 0:
-            ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
+        # if jdi is not None and jdi.mask == 0:
+        #     ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
         for full_jname, jcmd in joint_impedances_pvesd_dict.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
