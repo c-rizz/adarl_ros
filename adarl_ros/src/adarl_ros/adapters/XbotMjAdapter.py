@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-from typing import List, Tuple, Dict, Any, Optional, Sequence, Union, overload
+from typing import List, Tuple, Dict, Any, Optional, Sequence, Union, Mapping, overload
 
 from adarl.utils.utils import JointState, LinkState, Pose, build_pose, buildQuaternion
 from adarl.adapters.BaseSimulationAdapter import BaseSimulationAdapter
@@ -210,6 +210,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         
         self._apply_controls()
         
+        self.step_sim_for(duration_sec=duration_sec)
+    
+    def step_sim_for(self, duration_sec : float):
+
         n_sim_steps_to_do=round(duration_sec/self._xmj_sim.physics_dt)
         for i in range(n_sim_steps_to_do):
             step_ok=self._xmj_sim.step()
@@ -218,7 +222,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                 ggLog.error(f"{__class__}: {msg}")
                 raise ValueError(msg)
             self._sim_time+=self._xmj_sim.physics_dt
-    
+
     def step(self) -> float:
         # always step on a _xmj_env environment dt
         stime_before=self._sim_time
@@ -327,3 +331,198 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     
     def get_joints_state_step_stats(self):
         raise NotImplementedError()
+    
+    @override
+    def apply_joint_ref_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
+                                ramp_time = None):
+        """
+        Linearly ramp joint position references from current
+        values to targets over the configured ramp time.
+        """
+        # quick return for empty input
+        if len(joint_impedances_pvesd) == 0:
+            return
+
+        if ramp_time is None:
+            ramp_time=self.position_ramp_time
+
+        # convert tensor or mapping to dict keyed by (model_name,jname)
+        if isinstance(joint_impedances_pvesd, th.Tensor):
+            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
+        elif isinstance(joint_impedances_pvesd, Mapping):
+            joint_impedances_pvesd_dict = joint_impedances_pvesd
+        else:
+            raise TypeError("joint_impedances_pvesd must be a Mapping or a torch.Tensor")
+
+        # map commanded values to joint ids
+        commanded_joint_impedances_by_jid = {}
+        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
+            model_name, jname = full_jname
+            if model_name != self._model_name:
+                raise RuntimeError(
+                    f"Commanded joint impedance for model different from the controlled one "
+                    f"(asked '{model_name, jname}', but have '{self._model_name}')"
+                )
+            jid = self._xbotjname_to_jid[jname]
+            commanded_joint_impedances_by_jid[jid] = jcmd
+
+        # prepare current refs and target arrays
+        curr_pos_ref = self._robot_interface.getPositionReference()
+
+        # prepare target arrays (default to current to avoid NaNs)
+        target_pos = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
+
+        used_fallback = False
+        for jid in range(self._joints_num):
+            cmd = commanded_joint_impedances_by_jid.get(jid, None)
+            if cmd is None and self._allow_fallback:
+                used_fallback = True
+                ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
+                cmd = (curr_pos_ref[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
+            elif cmd is None:
+                raise RuntimeError(f"No impedance command provided for joint {jid} and fallback is not allowed.")
+
+            # cmd expected: (pos_ref, vel_ref, effort_ref, stiffness, damping)
+            pref, _, _, _, _ = cmd
+
+            # set immediate refs (we continue to re-send these each loop)
+            self._prefs[jid] = pref
+
+            # record numeric targets
+            target_pos[jid] = float(pref)
+
+        if used_fallback:
+            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
+            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
+
+        # If ramp time is zero, set targets immediately and return
+        if self.position_ramp_time <= 0.0:
+            self.position_ramp_time=-self.position_ramp_time
+
+        # Linear ramp: compute from initial to target over ramp_time
+        start_time=self.getEnvTimeFromStartup()
+        initial_p = [float(x) for x in curr_pos_ref]
+
+        ggLog.info(f"Starting linear position ramp for {self.position_ramp_time:.3f}s (sleep {self._position_ramp_tinysleep:.4f}s)...")
+
+        interp_p = [0.0] * self._joints_num
+
+        elapsed=0.0
+        try:
+            while True:
+
+                frac = min(1.0, max(0.0, elapsed / self.position_ramp_time))
+
+                # compute interpolated gains
+                for j in range(self._joints_num):
+                    interp_p[j] = initial_p[j] + frac * (target_pos[j] - initial_p[j])
+
+                    # update stored so other code sees intermediate values
+                    self._prefs[j] = interp_p[j]
+
+                # send to robot
+                self._robot_interface.setPositionReference(self._prefs)
+                self._robot_interface.move()
+                
+                self.step_sim_for(duration_sec=self._position_ramp_tinysleep)
+                elapsed+=self._position_ramp_tinysleep
+
+                # finish condition
+                if frac >= 1.0:
+                    break
+
+        except KeyboardInterrupt:
+            ggLog.warn("Position linear ramp interrupted by KeyboardInterrupt; leaving current interpolated values in effect.")
+        
+        ggLog.info(f"Linear position ramp finished after {elapsed:.3f}s.")
+        # final enforce exact target values (sets exact targets if ramp completed;
+        # self.apply_joint_impedances(joint_impedances_pvesd)
+    
+    @override
+    def apply_joint_impedances_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
+                                impedance_ramp_time = None):
+        """
+        Linearly ramp stiffness (p gains) and damping (v gains) from current
+        values to targets over the configured ramp time.
+        """
+        # quick return for empty input
+        if len(joint_impedances_pvesd) == 0:
+            return
+
+        if impedance_ramp_time is None:
+            impedance_ramp_time=self.impedance_ramp_time
+
+        # convert tensor or mapping to dict keyed by (model_name,jname)
+        if isinstance(joint_impedances_pvesd, th.Tensor):
+            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
+        elif isinstance(joint_impedances_pvesd, Mapping):
+            joint_impedances_pvesd_dict = joint_impedances_pvesd
+        else:
+            raise TypeError("joint_impedances_pvesd must be a Mapping or a torch.Tensor")
+
+        # map commanded values to joint ids
+        commanded_joint_impedances_by_jid = {}
+        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
+            model_name, jname = full_jname
+            if model_name != self._model_name:
+                raise RuntimeError(
+                    f"Commanded joint impedance for model different from the controlled one "
+                    f"(asked '{model_name, jname}', but have '{self._model_name}')"
+                )
+            jid = self._xbotjname_to_jid[jname]
+            commanded_joint_impedances_by_jid[jid] = jcmd
+
+        # prepare current refs and target arrays
+        curr_pos = self._robot_interface.getJointPosition()
+        curr_stiffness = list(self._robot_interface.getStiffness())
+        curr_damping = list(self._robot_interface.getDamping())
+
+        # prepare target arrays (default to current to avoid NaNs)
+        target_stiffness = [float(curr_stiffness[j]) for j in range(self._joints_num)]
+        target_damping   = [float(curr_damping[j])   for j in range(self._joints_num)]
+
+        # If ramp time is zero, set targets immediately and return
+        if self.impedance_ramp_time <= 0.0:
+            self.impedance_ramp_time=-self.impedance_ramp_time
+
+        # Linear ramp: compute from initial to target over ramp_time
+        elapsed=0.0
+        initial_p = [float(x) for x in curr_stiffness]
+        initial_v = [float(x) for x in curr_damping]
+
+        ggLog.info(f"Starting linear impedance ramp for {self.impedance_ramp_time:.3f}s (sleep {self._impedance_ramp_tinysleep:.4f}s)...")
+
+        try:
+            while True:
+                frac = min(1.0, max(0.0, elapsed / self.impedance_ramp_time))
+
+                # compute interpolated gains
+                interp_p = [0.0] * self._joints_num
+                interp_v = [0.0] * self._joints_num
+                for j in range(self._joints_num):
+                    interp_p[j] = initial_p[j] + frac * (target_stiffness[j] - initial_p[j])
+                    interp_v[j] = initial_v[j] + frac * (target_damping[j] - initial_v[j])
+
+                    # update stored so other code sees intermediate values
+                    self._pgains[j] = interp_p[j]
+                    self._vgains[j] = interp_v[j]
+
+                # send to robot
+                self._robot_interface.setStiffness(interp_p)
+                self._robot_interface.setDamping(interp_v)
+
+                self._robot_interface.move()
+                self.step_sim_for(duration_sec=self._impedance_ramp_tinysleep)
+                elapsed+=self._impedance_ramp_tinysleep
+
+                # finish condition
+                if frac >= 1.0:
+                    break
+
+        except KeyboardInterrupt:
+            ggLog.warn("Impedance linear ramp interrupted by KeyboardInterrupt; leaving current interpolated values in effect.")
+
+        # final enforce exact target values (sets exact targets if ramp completed;
+        self.apply_joint_impedances(joint_impedances_pvesd)
+
+        ggLog.info(f"Linear impedance ramp finished after {elapsed:.3f}s.")
