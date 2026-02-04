@@ -30,6 +30,7 @@ from typing_extensions import override
 from cartesian_interface.affine3 import Affine3 # needed by xbot_interface as it doesn't import it correctly
 import traceback
 from threading import RLock, Condition
+import threading
 from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
 from adarl.adapters.BaseAdapter import JointName,  LinkName
 import adarl.utils.session
@@ -232,7 +233,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         is_simulated : bool | None = None,
                         walltime_factor : float = 1.0,
                         run_asynch_while_init: bool = False,
-                        asynch_run_duration: float = 10.0):
+                        asynch_run_duration: float = 1.0):
         
         super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation, walltime_factor=walltime_factor)
 
@@ -283,6 +284,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         self._is_simulated = False
         
+        self._xbot_ok = False
+
     def is_simulated(self):
         return self._is_simulated
 
@@ -325,13 +328,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def fallback_damping(self):
         return self._fallback_cmd_damping
 
-    def startup(self, urdf: str = None, srdf: str = None):
+    def _startup_xbot(self, urdf: str = None, srdf: str = None):
 
-        super().startup()
-        
-        if self._run_asynch_while_init:            
-            self.run_async(duration_sec=self._asynch_run_duration) 
-        
         self._is_simulated = detect_simulated()
         ggLog.info(f"RosXbotAdapter detected simulated = {self._is_simulated}")
 
@@ -384,9 +382,30 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._jdi_subscriber = rospy.Subscriber(joint_dev_topicname, JointDeviceInfo, 
             self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {joint_dev_topicname}")
+
+        self._xbot_ok = True
+
+    def startup(self, urdf: str = None, srdf: str = None):
+
+        super().startup()
         
         if self._run_asynch_while_init:
-            self.stop_run_async()
+            self._startup_thread = threading.Thread(
+                target=self._startup_xbot,
+                name="startup_xbot",
+                daemon=True,
+                kwargs={"urdf": urdf, "srdf": srdf}
+            )
+            self._startup_thread.start()
+
+            while not self._xbot_ok: # continue to step sim until xbot is ok
+                self.run(duration_sec=self._asynch_run_duration) 
+            
+            if self._run_asynch_while_init:
+                self._startup_thread.join(timeout=1.0)
+
+        else:
+            self._startup_xbot(urdf=urdf, srdf=srdf)
 
         # imu_topic_name = "/xbotcore/imu/"+self._imu_link
         # self._imu_frame="none"
