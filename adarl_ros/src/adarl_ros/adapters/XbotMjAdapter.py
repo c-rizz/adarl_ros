@@ -408,12 +408,15 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
         interp_p = [0.0] * self._joints_num
 
+        start_time=self.getEnvTimeFromStartup()
         elapsed=0.0
 
         ggLog.info(f"Starting linear position ramp for {ramp_time:.3f}s (sleep {self._position_ramp_tinysleep:.4f}s)...")
 
         while True:
-
+            
+            now = self.getEnvTimeFromStartup()
+            elapsed = now - start_time
             frac = min(1.0, max(0.0, elapsed / ramp_time))
 
             # compute interpolated gains
@@ -428,7 +431,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
             self._robot_interface.move()
             
             self.step_sim_for(duration_sec=self._position_ramp_tinysleep)
-            elapsed+=self._position_ramp_tinysleep
 
             # finish condition
             if frac >= 1.0:
@@ -484,11 +486,14 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         initial_p = [float(x) for x in curr_stiffness]
         initial_v = [float(x) for x in curr_damping]
 
+        start_time=self.getEnvTimeFromStartup()
         elapsed=0.0
 
         ggLog.info(f"Starting linear impedance ramp for {ramp_time:.3f}s (sleep {self._impedance_ramp_tinysleep:.4f}s)...")
 
         while True:
+            now = self.getEnvTimeFromStartup()
+            elapsed = now - start_time
             frac = min(1.0, max(0.0, elapsed / ramp_time))
 
             # compute interpolated gains
@@ -508,7 +513,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
             self._robot_interface.move()
             self.step_sim_for(duration_sec=self._impedance_ramp_tinysleep) # we need to step the sim (not necessary on real robot)
-            elapsed+=self._impedance_ramp_tinysleep
 
             # finish condition
             if frac >= 1.0:
