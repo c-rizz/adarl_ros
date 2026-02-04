@@ -243,7 +243,7 @@ class RosAdapter(BaseAdapter):
                 raise RuntimeError(f"Requested image from a camera {c}, which was not requested in set_monitored_cameras")
 
         retDict = {}
-        call_time = rospy.get_time()
+        call_time = rospy.get_time() #TODO use adapter time
         lastErrTime = call_time
         camerasGotten = []
         camerasMissing = requestedCameras
