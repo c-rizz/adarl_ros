@@ -17,8 +17,11 @@ import torch as th
 from typing_extensions import override
 
 import rospy
-class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
-    ):
+from rosgraph_msgs.msg import Clock
+import threading
+import time
+
+class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
     """This class allows to control the execution of a Mujoco+XBot2 simulation and command the robot thorugh XBot2 ROS topic interface.
 
@@ -53,8 +56,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         """Initialize the Simulator.
 
         """
-
-        rospy.set_param('/use_sim_time', True) # ros adapter will wait for this param
+        self._clock_pub = None
+        rospy.set_param('/use_sim_time', False) # initially 
+        # set to false, otherwise RobotInterface from xbot will halt waiting for /clock
 
         self._render_to_file=render_to_file
         self._render_fps=render_fps
@@ -68,8 +72,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self._xmj_sim=None
         self._abs_sim_timer=0
         self._sim_time=0
-        self._sim_thread_stop = None
-        self._sim_thread = None
         sim_ok=self._init_simulation(base_link) # after this, all data from sim is available
         if not sim_ok:
             msg="Failed to initialize simulation!!"
@@ -225,6 +227,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                 msg=f"Failed to step XMj simulation!"
                 raise ValueError(msg)
             self._sim_time+=simdt
+            if self._clock_pub is not None:
+                msg = Clock()
+                msg.clock = rospy.Time.from_sec(self._sim_time)
+                self._clock_pub.publish(msg)
 
     def step(self) -> float:
         # always step on a _xmj_env environment dt
@@ -238,6 +244,10 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         srdf: str= None):
         reset_ok=self._xmj_sim.reset()
         super().startup(urdf=urdf, srdf=srdf)
+
+        # ready to run, now initialize clock publisher
+        rospy.set_param('/use_sim_time', True)
+        self._clock_pub = rospy.Publisher("/clock", Clock, queue_size=10)
 
     def xmj_env(self):
         return self._xmj_sim

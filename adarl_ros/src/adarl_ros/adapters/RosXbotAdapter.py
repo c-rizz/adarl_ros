@@ -388,24 +388,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def startup(self, urdf: str = None, srdf: str = None):
 
         super().startup()
+    
+        self.run_async(duration_sec=self._asynch_run_duration) # run sim for a while to let xbot start up properly (and avoid timeouts on service calls)
         
-        if self._run_asynch_while_init:
-            self._startup_thread = threading.Thread(
-                target=self._startup_xbot,
-                name="startup_xbot",
-                daemon=True,
-                kwargs={"urdf": urdf, "srdf": srdf}
-            )
-            self._startup_thread.start()
+        self._startup_xbot(urdf=urdf, srdf=srdf)
 
-            while not self._xbot_ok: # continue to step sim until xbot is ok
-                self.run(duration_sec=self._asynch_run_duration) 
-            
-            if self._run_asynch_while_init:
-                self._startup_thread.join(timeout=1.0)
-
-        else:
-            self._startup_xbot(urdf=urdf, srdf=srdf)
+        self.stop_run_async()
 
         # imu_topic_name = "/xbotcore/imu/"+self._imu_link
         # self._imu_frame="none"
