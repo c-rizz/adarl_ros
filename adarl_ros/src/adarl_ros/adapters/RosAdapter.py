@@ -63,7 +63,8 @@ class RosAdapter(BaseAdapter):
                             forced_ros_master_uri : Union[str, None] = None,
                             maxObsDelay = float("+inf"),
                             blocking_observation = False,
-                            walltime_factor : float = 1.0):
+                            walltime_factor : float = 1.0,
+                            wait_for_simtime : bool = True):
         """Initialize the Simulator controller.
 
         Raises
@@ -73,6 +74,9 @@ class RosAdapter(BaseAdapter):
 
         """
         super().__init__()
+
+        self._wait_for_simtime=wait_for_simtime
+
         self._stepLength_sec = stepLength_sec
 
         self._forced_ros_master_uri = forced_ros_master_uri
@@ -169,20 +173,23 @@ class RosAdapter(BaseAdapter):
         if self._forced_ros_master_uri is not None:
             os.environ['ROS_MASTER_URI'] = self._forced_ros_master_uri
 
-        # init_node uses use_sim_time to determine which time to use, but I can't
-        # find a reliable way for it to be set before init_node is being called
-        # So we wait for it to be set to either true or false
-        useSimTime : float = None
-        while useSimTime is None:
-            try:
-                useSimTime = rospy.get_param("/use_sim_time")
-            except KeyError:
-                ggLog.warn("Could not get /use_sim_time. Will retry")
-                time.sleep(1)
-            except ConnectionRefusedError:
-                ggLog.error("No connection to ROS parameter server. Will retry")
-                time.sleep(1)
-        ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
+        if self._wait_for_simtime:
+            # init_node uses use_sim_time to determine which time to use, but I can't
+            # find a reliable way for it to be set before init_node is being called
+            # So we wait for it to be set to either true or false
+            useSimTime : float = None
+            while useSimTime is None:
+                try:
+                    useSimTime = rospy.get_param("/use_sim_time")
+                except KeyError:
+                    ggLog.warn("Could not get /use_sim_time. Will retry")
+                    time.sleep(1)
+                except ConnectionRefusedError:
+                    ggLog.error("No connection to ROS parameter server. Will retry")
+                    time.sleep(1)
+            ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
+        else:
+            useSimTime = False
 
         self._use_sim_time = useSimTime
         rospy.init_node('ros_env_controller', anonymous=True)
@@ -211,9 +218,6 @@ class RosAdapter(BaseAdapter):
         #     self._linkStatesSubscriber = rospy.Subscriber(topic, LinkStates, self._linkStatesCallback, queue_size=1)
         #     ggLog.info(f"Subscribed to {topic}")
 
-
-
-
         self._listenersStarted = True
 
 
@@ -239,7 +243,7 @@ class RosAdapter(BaseAdapter):
                 raise RuntimeError(f"Requested image from a camera {c}, which was not requested in set_monitored_cameras")
 
         retDict = {}
-        call_time = rospy.get_time()
+        call_time = rospy.get_time() #TODO use adapter time
         lastErrTime = call_time
         camerasGotten = []
         camerasMissing = requestedCameras

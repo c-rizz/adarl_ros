@@ -20,41 +20,63 @@ from xbot_interface import xbot_interface as xbot
 from urdf_parser_py.urdf import URDF
 
 from std_srvs.srv import SetBool
-from xbot_msgs.srv import PluginStatus, SetControlMask
-from xbot_msgs.msg import JointDeviceInfo
+from xbot_msgs.srv import PluginStatus, SetControlMask, GetStringList, GetParameterInfo, GetParameterInfoRequest
+from xbot_msgs.msg import JointDeviceInfo, Statistics2
+from sensor_msgs.msg import Imu
+
 import torch as th
 from adarl.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
 from typing_extensions import override
 from cartesian_interface.affine3 import Affine3 # needed by xbot_interface as it doesn't import it correctly
 import traceback
 from threading import RLock, Condition
+import threading
 from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
 from adarl.adapters.BaseAdapter import JointName,  LinkName
 import adarl.utils.session
 
+from transforms3d.quaternions import mat2quat
 
-
-
+import math
 
 # ------------------------------------------------------------------------------------------
 # XBOT helper functions
 # ------------------------------------------------------------------------------------------
 
-
-
-def build_xbot_cfg(is_floating_base):
+def build_xbot_cfg(is_floating_base, 
+            urdf: str = None, 
+            srdf: str= None):
     """
     A function to construct the xbotinterface config object from ros
     """
     t0 = time.monotonic()
-    while True:
-        urdf = rospy.get_param('/xbotcore/robot_description', default=None) # type: ignore
-        if urdf is not None:
-            break
-        if time.monotonic() - t0 > 60:
-            raise TimeoutError("Timed out waiting for /xbotcore/robot_description. Is xbot-core running?")
-        time.sleep(0.2)
-    srdf = rospy.get_param('/xbotcore/robot_description_semantic') # type: ignore
+    timeout=10.0
+    retry_freq=1.5
+    robot_description_name='/xbotcore/robot_description'
+    semantic_description_name='/xbotcore/robot_description_semantic'
+
+    if urdf is None: # get from robot description
+        while True:
+            urdf = rospy.get_param(robot_description_name, default=None) # type: ignore
+            if urdf is not None:
+                break
+            if time.monotonic() - t0 > timeout: # retry for max timeout secs
+                raise TimeoutError()
+            time.sleep(retry_freq)
+            ggLog.warn(f"build_xbot_cfg: could not get robot description parameter at \"{robot_description_name}\"! Trying again...")
+
+    if srdf is None: # get from robot description
+        while True:
+            srdf = rospy.get_param(semantic_description_name)
+            if srdf is not None:
+                break
+            if time.monotonic() - t0 > timeout: # retry for max timeout secs
+                raise TimeoutError()
+            time.sleep(retry_freq)
+            ggLog.warn(f"build_xbot_cfg: could not get robot semantic description parameter at \"{semantic_description_name}\"! Trying again...")
+
+    # type: ignore
+
     if not isinstance(urdf, str):
         raise RuntimeError(f"URDF is not a string, it's a {type(urdf)}")
     if not isinstance(srdf, str):
@@ -68,10 +90,9 @@ def build_xbot_cfg(is_floating_base):
     cfg.set_string_parameter('framework', 'ROS')    
     return cfg
 
-
 def get_link_names(robot):
     urdf = URDF.from_xml_string(robot.getUrdfString())
-    print(urdf.links)
+    # print(urdf.links)
     lnames = [l.name for l in urdf.links]
     return lnames
 
@@ -95,28 +116,66 @@ def get_system_recap_string(robot):
         ret += f"\n{n}: {q} vs {qref}"
     return ret
 
+# def set_filters(set_enabled : bool, required_filter_hz = 2.0):
+#     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
+#     wait_for_ros_service(enable_filter_srv_name)
+#     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
+#     set_filter_srv_name = "/xbotcore/set_filter_profile_medium"
+#     wait_for_ros_service(set_filter_srv_name)
+#     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
+#     filter_status = not set_enabled
+#     filter_hz = None
+#     while filter_status != set_enabled and filter_hz!=required_filter_hz:
+        
+#         topic_name = "/xbotcore/joint_device_info"
+#         jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
+#         if not isinstance(jdi, JointDeviceInfo):
+#             raise RuntimeError(f"Unexpected type received from {topic_name}, should be JointDeviceInfo but it's {type(jdi)}")
+#         filter_status = jdi.filter_active
+#         filter_hz = jdi.filter_cutoff_hz
 
+#         if filter_hz != required_filter_hz:
+#             resp = set_filter_mode_srv() # this service always returns success = False
+#             # if not resp.success: 
+#             #     raise RuntimeError(f"Failed to set filter cutoff. Status: {resp}")
+#         if filter_status != set_enabled:
+#             # print(("Enabling" if set_enabled else "Disabling")+" filters...")
+#             resp = enable_filter_srv(set_enabled)
+#             if not resp.success:
+#                 raise RuntimeError(f"Failed to set filters status: {resp}")
+#     ggLog.info(f"Filters {'enabled' if filter_status else 'disabled'}. Cutoff = {filter_hz}")
 
-def set_filters(set_enabled : bool, required_filter_hz = 20.0):
+def set_filters(set_enabled : bool, profile_name = "safe"):
+    ggLog.info(f"Trying to set filter profile {profile_name}")
+
+    # # # get filter cutoff hz for the selected profile (to be used for checking)
+    # profile_freq_getter_srv_name = "/xbotcore/get_parameter_info"
+    # filter_profile_srv = rospy.ServiceProxy(profile_freq_getter_srv_name, GetParameterInfo)
+    # param_info_msg=GetParameterInfoRequest()
+    # param_info_msg.name=f"/xbot/hal/joint_safety/filter_{profile_name}_cutoff_hz"
+    # resp = filter_profile_srv(param_info_msg)
+
     enable_filter_srv_name = "/xbotcore/enable_joint_filter"
-    rospy.wait_for_service(enable_filter_srv_name)
+    wait_for_ros_service(enable_filter_srv_name, timeout=1.0)
     enable_filter_srv = rospy.ServiceProxy(enable_filter_srv_name, SetBool)
-    set_filter_srv_name = "/xbotcore/set_filter_profile_fast"
-    rospy.wait_for_service(set_filter_srv_name)
+    set_filter_srv_name = f"/xbotcore/set_filter_profile_{profile_name}"
+    wait_for_ros_service(set_filter_srv_name, timeout=1.0)
     set_filter_mode_srv = rospy.ServiceProxy(set_filter_srv_name, std_srvs.srv.Trigger)
     filter_status = not set_enabled
     filter_hz = None
-    while filter_status != set_enabled and filter_hz!=required_filter_hz:
+    while filter_status != set_enabled:
+        
+        resp = set_filter_mode_srv() # this service always returns success = False
+        # if not resp.success: 
+        #     raise RuntimeError(f"Failed to set filter cutoff. Status: {resp}")
+
         topic_name = "/xbotcore/joint_device_info"
         jdi = rospy.wait_for_message(topic_name, JointDeviceInfo, timeout = 10)
         if not isinstance(jdi, JointDeviceInfo):
             raise RuntimeError(f"Unexpected type received from {topic_name}, should be JointDeviceInfo but it's {type(jdi)}")
         filter_status = jdi.filter_active
         filter_hz = jdi.filter_cutoff_hz
-        if filter_hz != required_filter_hz:
-            resp = set_filter_mode_srv() # this service always returns success = False
-            # if not resp.success: 
-            #     raise RuntimeError(f"Failed to set filter cutoff. Status: {resp}")
+
         if filter_status != set_enabled:
             # print(("Enabling" if set_enabled else "Disabling")+" filters...")
             resp = enable_filter_srv(set_enabled)
@@ -124,31 +183,31 @@ def set_filters(set_enabled : bool, required_filter_hz = 20.0):
                 raise RuntimeError(f"Failed to set filters status: {resp}")
     ggLog.info(f"Filters {'enabled' if filter_status else 'disabled'}. Cutoff = {filter_hz}")
 
-
-
+def wait_for_ros_service(server_name: str, timeout=1.0):
+    try:
+        rospy.wait_for_service(server_name, timeout=timeout)
+    except rospy.exceptions.ROSException:
+        ggLog.warn(f"wait for service {server_name} timeouted.")
+        return False
+    return True
 
 def detect_simulated():
     # Is here some better way to do this?
     # Can I ask xbot?
-    topic_names = [t[0] for t in rospy.get_published_topics()]
-    if "/gazebo/link_states" in topic_names:
-        return True
-    else:
+    switch_srv_name = "/xbotcore/get_parameter_value"
+    hw_type_param_name="/xbot/hal/hw_type"
+    service_avail=wait_for_ros_service(switch_srv_name, timeout=10.0)
+    if not service_avail:
+        ggLog.warn(f"Failed to call sevice proxy for {switch_srv_name} with request of type {hw_type_param_name}")
         return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    get_param_value_srv = rospy.ServiceProxy(switch_srv_name, GetStringList)
+    res=get_param_value_srv(hw_type_param_name)
+    if not res.success:
+        raise RuntimeError(f"Failed to get hw type parameter from XBot!")
+    
+    hw_type=res.response[0]
+    
+    return hw_type=="sim"
 class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAdapter):
 
     def __init__(self,  model_name : str,
@@ -160,19 +219,30 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         reference_frame : str = "world",
                         torch_device : th.device = th.device("cpu"),
                         fallback_cmd_stiffness : float = 200.0,
-                        fallback_cmd_damping : float= 100.0,
+                        fallback_cmd_damping : float= 60.0,
                         allow_fallback : bool = True,
                         jpos_cmd_max_vel = {},
                         jpos_cmd_max_vel_default = 0.0,
                         jpos_cmd_max_acc = {},
                         jpos_cmd_max_acc_default = 0.0,
                         enable_filters = True,
+                        imu_link: str = "imu_link",
+                        base_link : str = "imu_link",
                         position_commands_stiffness : float = 100.0,
                         position_commands_damping : float = 10.0,
-                        is_simulated : bool | None = False,
-                        walltime_factor : float = 1.0):
+                        is_simulated : bool | None = None,
+                        walltime_factor : float = 1.0,
+                        run_asynch_while_init: bool = False,
+                        asynch_run_duration: float = 1.0):
+        
         super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation, walltime_factor=walltime_factor)
+
+        self._run_asynch_while_init=run_asynch_while_init
+        self._asynch_run_duration=asynch_run_duration
+
         self._is_floating_base = is_floating_base
+        self._imu_link= imu_link
+        self._base_link = base_link
         self._model_name = model_name
         self._reference_frame = reference_frame
         self._torch_device = torch_device
@@ -206,7 +276,15 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
         self._control_dt = 0.001 # can I get this from somewhere?
-        self._is_simulated = is_simulated if is_simulated is not None else detect_simulated()
+
+        self.impedance_ramp_time=2.0 # [s]
+        self.position_ramp_time=5.0  # [s] for position ref ramps
+        self._impedance_ramp_tinysleep=0.005
+        self._position_ramp_tinysleep=0.005
+
+        self._is_simulated = False
+        
+        self._xbot_ok = False
 
     def is_simulated(self):
         return self._is_simulated
@@ -215,33 +293,190 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         with self._joint_device_info_mutex:
             self._last_jdi_time = self.getEnvTimeFromStartup()
             self._last_joint_device_info = msg
+    
+    def _xbot_statistics_callback(self, msg):
+        self._xbot_task_stats=msg.task_stats
+        
+    # def _imu_device_callback(self, msg):
+    #     # read imu data from xbot topic
+    #     self._imu_frame = msg.header.frame_id
+
+    #     orientation = msg.orientation
+    #     self._imu_q_last[:, 0]=orientation.w 
+    #     self._imu_q_last[:, 1]=orientation.x
+    #     self._imu_q_last[:, 2]=orientation.y
+    #     self._imu_q_last[:, 3]=orientation.z
+
+    #     omega=msg.angular_velocity
+    #     self._imu_omega_last[:, 0]=omega.x
+    #     self._imu_omega_last[:, 1]=omega.y
+    #     self._imu_omega_last[:, 2]=omega.z
+
+    #     lin_acc=omega=msg.angular_velocity
+    #     self._imu_linacc_last[:, 0]=lin_acc.x
+    #     self._imu_linacc_last[:, 1]=lin_acc.y
+    #     self._imu_linacc_last[:, 2]=lin_acc.z
 
     @override
     def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
         self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
         super().set_monitored_joints(jointsToObserve)
+    
+    def fallback_striffness(self):
+        return self._fallback_cmd_stiffness
+    
+    def fallback_damping(self):
+        return self._fallback_cmd_damping
 
-    def startup(self):
-        super().startup()
+    def _startup_xbot(self, urdf: str = None, srdf: str = None):
 
-        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base)
-        self._robot_interface = xbot.RobotInterface(cfg)
-        # ggLog.info(get_system_recap_string(self._robot_interface))
-        set_filters(True)
+        self._is_simulated = detect_simulated()
+        ggLog.info(f"RosXbotAdapter detected simulated = {self._is_simulated}")
+
+        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base, urdf=urdf, srdf=srdf)
+        
+        wait_for_sec=1.5 # [s]
+        timeout_sec=60.0
+        t0 = time.monotonic()
+        self._robot_interface=None
+        while True:
+            try:
+                self._robot_interface = xbot.RobotInterface(cfg)
+                if self._robot_interface is not None:
+                    break
+            except RuntimeError:
+                ggLog.error(f"{__class__}: Failed to initialize robot interface (is xbot-core running?)! Will try again in {wait_for_sec} s...")
+                time.sleep(wait_for_sec)
+                if time.monotonic()-t0>timeout_sec:
+                    break
+        
+        if self._robot_interface is None:
+            raise TimeoutError(f"Timed out while trying to construct robot interface")
+        
+        ggLog.info(get_system_recap_string(self._robot_interface))
+
+        self._ros_control_running=False
+        statistics_topicname="/xbotcore/statistics"
+        self._xbot_statistics_subscriber = rospy.Subscriber(statistics_topicname, Statistics2, 
+            self._xbot_statistics_callback, queue_size=1)
+        self._xbot_task_stats=None
+        while self._xbot_task_stats is None: # wait for first xbot stat
+            # msg to arrive to retrive task order
+            time.sleep(1.0)
+        self._xbot_task_info_map={}
+        for i in range(len(self._xbot_task_stats)):
+            task_info=self._xbot_task_stats[i]
+            self._xbot_task_info_map[task_info.name]=i
+        ggLog.info(f"Subscribed to {statistics_topicname}")
+
+        set_filters(True, profile_name="safe")
         self._setup_joint_control(control_mask=255)
         self._switch_control(self._enable_filters)
+
         enabled_joint_names = self._robot_interface.getEnabledJointNames() # this is different from robot.model().getEnabledJointNames()
         self._joints_num = len(enabled_joint_names)
         self._xbotjname_to_jid = {jname : enabled_joint_names.index(jname) for jname in enabled_joint_names}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
+        
+        joint_dev_topicname="/xbotcore/joint_device_info"
+        self._jdi_subscriber = rospy.Subscriber(joint_dev_topicname, JointDeviceInfo, 
+            self._joint_device_info_callback, queue_size=1)
+        ggLog.info(f"Subscribed to {joint_dev_topicname}")
+
+        self._xbot_ok = True
+
+    def startup(self, urdf: str = None, srdf: str = None):
+
+        super().startup()
+    
+        self.run_async(duration_sec=self._asynch_run_duration) # run sim for a while to let xbot start up properly (and avoid timeouts on service calls)
+        
+        self._startup_xbot(urdf=urdf, srdf=srdf)
+
+        self.stop_run_async()
+
+        # imu_topic_name = "/xbotcore/imu/"+self._imu_link
+        # self._imu_frame="none"
+        # self._imu_q_last=np.zeros((1, 4))
+        # self._imu_q_last[:, 0]=1.0
+        # self._imu_omega_last=np.zeros((1, 3))
+        # self._imu_linacc_last=np.zeros((1, 3))
+        # self._imu_subscriber = rospy.Subscriber(imu_topic_name, Imu, self._imu_device_callback, queue_size=1)
+        
+        self._xbot_imu = self._robot_interface.getImu()[self._imu_link] # we assume there's only one imu
+        self._R_imu_link=self._robot_interface.model().getPose(self._base_link, self._imu_link).matrix()[:3,:3] # we assume a static tranform
+
+        # base link state (defaults to imu_link), updated when imu callback is called
+        self._base_q_last=np.zeros((1, 4))
+        self._base_q_last[:, 0]=1.0
+        self._base_omega_last=np.zeros((1, 3))
+        self._base_linacc_last=np.zeros((1, 3))
 
         ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
 
         self._jimpedance_controlled_joints_jids = np.array([self._xbotjname_to_jid[jn] for model_name,jn in self._jimpedance_controlled_joints])
-        topic_name = "/xbotcore/joint_device_info"
-        self._jdi_subscriber = rospy.Subscriber(topic_name, JointDeviceInfo, self._joint_device_info_callback, queue_size=1)
-        ggLog.info(f"Subscribed to {topic_name}")
+        
+        # preallocating cmds
+        self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._vrefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._erefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._pgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
+        self._vgains =np.zeros(shape=(self._joints_num,), dtype=np.float64)
 
+    def set_filters(self, set_enabled : bool, profile_name = "safe"):
+        set_filters(set_enabled=set_enabled,profile_name=profile_name)
+    
+    def _is_xbot_task_running(self,task_name: str):
+        task_id=self._xbot_task_info_map[task_name]
+        return self._xbot_task_stats[task_id].state=="Running"
+
+    def trigger_homing(self):
+        homing_switch_srv_name = "/xbotcore/homing/switch"
+        homing_state_srv_name = "/xbotcore/homing/state"
+        timeout_s= float("+inf")
+        wait_for_ros_service(homing_switch_srv_name, timeout=1.0)
+        homing_ros_switch = rospy.ServiceProxy(homing_switch_srv_name, SetBool)
+        ggLog.info(f"Created service proxy for {homing_switch_srv_name}")
+
+        wait_for_ros_service(homing_state_srv_name, timeout=1.0)
+        homing_ros_state = rospy.ServiceProxy(homing_state_srv_name, PluginStatus)
+        ggLog.info(f"Created service proxy for {homing_state_srv_name}")
+
+        t0 = time.monotonic()
+        homing_running=True
+        status = None
+        self._switch_control(switch_on=False) # deactivate ros control to
+        # avoid race conditions on the joints
+        while homing_running:
+            if time.monotonic()-t0>timeout_s:
+                raise TimeoutError(f"Timed out waiting for homing to be completed switch. Status = '{status}'")
+            try:
+                # ggLog.info(f"Calling {state_srv_name}")
+                resp = homing_ros_state()
+            except rospy.ServiceException as e:
+                ggLog.warn(f"homing_ros_state call failed: {e}")
+                raise e
+            status = resp.status
+            homing_running = resp.status == "Running"
+            # ggLog.info(f"ros_control state: {resp}")
+            if not homing_running:
+                try:
+                    resp = homing_ros_switch(True) # DOES NOT WORK IF THE SIMULATION IS PAUSED. A sadly, services have no timeouts (https://github.com/ros/ros_comm/pull/2144)
+                except rospy.ServiceException as e:
+                    ggLog.info(f"homing_ros_switch call failed: {e}")
+                    raise e
+                # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
+            time.sleep(0.5)
+        ggLog.info(f"homing performed with response: {resp}")
+        self._switch_control(switch_on=True) # we can reactivate ros control
+        time.sleep(2.0)
+
+    def is_ros_control_running(self):
+        return self._is_xbot_task_running("ros_control")
+
+    def get_robot_interface(self):
+        return self._robot_interface
+    
     def get_xbot_controlled_joints(self) -> list[tuple[str,str]]:
         """Get the names of the joint that XBot is controlling
 
@@ -288,9 +523,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # self._jointStateMsgAgeAvg.addValue(obsDelay)
 
         jpos = self._robot_interface.getJointPosition()
-        jvel = self._robot_interface.getJointVelocity()
+        # jvel = self._robot_interface.getJointVelocity()
+        jvel = self._robot_interface.getMotorVelocity() # cleaner signal on motor side (more resolution)
         jeff = self._robot_interface.getJointEffort()
-
 
         ret : dict[tuple[str,str], JointState]= {}
         for full_joint_name in requestedJoints:
@@ -366,8 +601,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         
         # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
         jdi = self.get_joint_device_info(after_env_time=float("-inf"))
-        if jdi is not None and jdi.mask == 0:
-            ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
+        # if jdi is not None and jdi.mask == 0:
+        #     ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
         for full_jname, jcmd in joint_impedances_pvesd_dict.items():
             model_name, jname = full_jname
             if model_name != self._model_name:
@@ -376,6 +611,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     def _apply_commanded_joint_impedances(self):
         self.apply_joint_impedances(self._commanded_joint_impedances_by_name)
+        # self.apply_joint_impedances_with_ramp(self._commanded_joint_impedances_by_name) # ramp to avoid dangerous torque discontinuities
 
     @override
     def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor]):
@@ -395,9 +631,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 raise RuntimeError(f"Commanded joint impedance for model different from the controleld one (asked '{model_name, jname}', but have '{self._model_name}')")
             jid = self._xbotjname_to_jid[jname]
             commanded_joint_impedances_by_jid[jid] = jcmd
-        
-        prefs, vrefs, erefs, pgains, vgains = (np.zeros(shape=(self._joints_num,), dtype=np.float64) 
-                                               for _ in range(5))
 
         curr_pos = self._robot_interface.getJointPosition()
         used_fallback = False
@@ -408,21 +641,19 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
                 # keeps current position
                 cmd = (curr_pos[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
-            prefs[jid], vrefs[jid], erefs[jid], pgains[jid], vgains[jid] = cmd
+            self._prefs[jid], self._vrefs[jid], self._erefs[jid], self._pgains[jid], self._vgains[jid] = cmd
         if used_fallback:
             ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
             ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
 
-        self._robot_interface.setStiffness(pgains)
-        self._robot_interface.setDamping(vgains)
-        self._robot_interface.setPositionReference(prefs)
-        self._robot_interface.setVelocityReference(vrefs)
-        self._robot_interface.setEffortReference(erefs)
+        self._robot_interface.setStiffness(self._pgains)
+        self._robot_interface.setDamping(self._vgains)
+        self._robot_interface.setPositionReference(self._prefs)
+        self._robot_interface.setVelocityReference(self._vrefs)
+        self._robot_interface.setEffortReference(self._erefs)
         self._robot_interface.move()
 
-        self._last_sent_pvesd = np.stack([prefs,vrefs,erefs,pgains,vgains], axis = 1)
         # ggLog.info(f"Sent robot_interface command")
-
 
     def _apply_commanded_joint_trajectories(self):
         jimp_cmds_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float]] = {}
@@ -436,6 +667,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self.setJointsImpedanceCommand(joint_impedances_pvesd = jimp_cmds_pvesd)
 
     def _apply_commanded_joint_positions(self):
+
+        if len(self._commanded_joint_positions)==0:
+            return
+            
         jimp_pvesd_cmds : Dict[Tuple[str,str],Tuple[float,float,float,float,float]] = {}
         js = self.getJointsState(list(self._commanded_joint_positions.keys()))
         for jn,p_ref_velsc_accsc in self._commanded_joint_positions.items():
@@ -461,6 +696,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._apply_commanded_joint_trajectories() # trajectories override positions by setting position commands
         self._apply_commanded_joint_positions() # positions override impedances by setting impedance commands
         self._apply_commanded_joint_impedances() 
+
+    def apply_cmds_now(self):
+        self._apply_controls()
 
     @override
     def run(self, duration_sec: float):
@@ -497,12 +735,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # ggLog.info(f"switch_xbotros_control({switch_on})")
         switch_srv_name = "/xbotcore/ros_control/switch"
         state_srv_name = "/xbotcore/ros_control/state"
-        rospy.wait_for_service(switch_srv_name, timeout = timeout_s)
+        wait_for_ros_service(switch_srv_name, timeout=1.0)
         ros_ctrl_switch = rospy.ServiceProxy(switch_srv_name, SetBool)
-        # ggLog.info(f"Created service proxy for {switch_srv_name}")
-        rospy.wait_for_service(state_srv_name, timeout = timeout_s)
+        ggLog.info(f"Created service proxy for {switch_srv_name}")
+        wait_for_ros_service(state_srv_name, timeout=1.0)
         ros_ctrl_state = rospy.ServiceProxy(state_srv_name, PluginStatus)
-        # ggLog.info(f"Created service proxy for {state_srv_name}")
+        ggLog.info(f"Created service proxy for {state_srv_name}")
 
         t0 = time.monotonic()
         switched_on = not switch_on
@@ -528,12 +766,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                     raise e
                 # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
             time.sleep(0.5)
+        time.sleep(2.0)
         ggLog.info(f"switched ros_control to state: {resp}")
         return switched_on
 
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
         control_mask_srv_name = "/xbotcore/joint_master/set_control_mask"
-        rospy.wait_for_service(control_mask_srv_name, timeout=timeout_s)
+        wait_for_ros_service(control_mask_srv_name, timeout=timeout_s)
         control_mask_srv = rospy.ServiceProxy(control_mask_srv_name, SetControlMask)
         t0 = time.monotonic()
         current_mask = None
@@ -668,7 +907,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 self.clear_commands()
                 raise MoveFailError(f"Timed out waiting for sync joint move (wall timeout {elapsed_wall_time}>{timeout_wall}) errors = {errors} tolerance = {joint_position_tolerance}")
 
-
+    def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
+        raise NotImplementedError()
+    
+    def get_joints_state_step_stats(self):
+        raise NotImplementedError()
 
     def is_safety_triggered(self):
         raise NotImplementedError()
@@ -759,3 +1002,195 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 acceeleration = acc + correction
             accelerations.append(self._thtens(acceleration))
         return th.stack(accelerations)
+
+    def get_base_link_state(self):
+        return (self._base_link, self._base_q_last, self._base_omega_last, self._base_linacc_last)
+    
+    def read_imu_data(self):
+        
+        # update base link state (if not provided == imu_link)
+        R_world_imu=self._xbot_imu.getOrientation()
+        R_world_link=R_world_imu@self._R_imu_link # orientation of base link wrt world frame
+        omega_imu_loc=self._xbot_imu.getAngularVelocity() # IMU local !!
+        
+        self._base_q_last[:, :]=mat2quat(R_world_link) # IMPORTANT: returns quaterion in w,x,y,z order    
+        self._base_omega_last[:, :]= self._R_imu_link.T @ omega_imu_loc # rotate from IMU to base link frame
+        self._base_linacc_last[:, :]=self._R_imu_link.T @ self._xbot_imu.getLinearAcceleration() # we would need to account
+        # for linear velocity and angular acc to do it properly (accurate only if imu==base_link)
+        
+
+    @override
+    def apply_joint_ref_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
+                                ramp_time = None):
+        """
+        Linearly ramp joint position references from current
+        values to targets over the configured ramp time.
+        """
+        # quick return for empty input
+        if len(joint_impedances_pvesd) == 0:
+            return
+
+        if ramp_time is None:
+            ramp_time=self.position_ramp_time
+
+        # convert tensor or mapping to dict keyed by (model_name,jname)
+        if isinstance(joint_impedances_pvesd, th.Tensor):
+            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
+        elif isinstance(joint_impedances_pvesd, Mapping):
+            joint_impedances_pvesd_dict = joint_impedances_pvesd
+        else:
+            raise TypeError("joint_impedances_pvesd must be a Mapping or a torch.Tensor")
+
+        # map commanded values to joint ids
+        commanded_joint_impedances_by_jid = {}
+        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
+            model_name, jname = full_jname
+            if model_name != self._model_name:
+                raise RuntimeError(
+                    f"Commanded joint impedance for model different from the controlled one "
+                    f"(asked '{model_name, jname}', but have '{self._model_name}')"
+                )
+            jid = self._xbotjname_to_jid[jname]
+            commanded_joint_impedances_by_jid[jid] = jcmd
+
+        # prepare current refs and target arrays
+        curr_pos_ref = self._robot_interface.getPositionReference()
+
+        # prepare target arrays (default to current to avoid NaNs)
+        target_pos = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
+
+        used_fallback = False
+        for jid in range(self._joints_num):
+            cmd = commanded_joint_impedances_by_jid.get(jid, None)
+            if cmd is None and self._allow_fallback:
+                used_fallback = True
+                ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
+                cmd = (curr_pos_ref[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
+            elif cmd is None:
+                raise RuntimeError(f"No impedance command provided for joint {jid} and fallback is not allowed.")
+
+            # cmd expected: (pos_ref, vel_ref, effort_ref, stiffness, damping)
+            pref, _, _, _, _ = cmd
+
+            # set immediate refs (we continue to re-send these each loop)
+            self._prefs[jid] = pref
+
+            target_pos[jid] = self._prefs[jid]
+
+        if used_fallback:
+            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
+            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
+
+        interp_p = [0.0] * self._joints_num
+
+        start_time=self.getEnvTimeFromStartup()
+        elapsed=0.0
+
+        ggLog.info(f"Starting linear position ramp for {ramp_time:.3f}s (sleep {self._position_ramp_tinysleep:.4f}s)...")
+
+        while True:
+            
+            now = self.getEnvTimeFromStartup()
+            elapsed = now - start_time
+            frac = min(1.0, max(0.0, elapsed / ramp_time))
+
+            # compute interpolated gains
+            for j in range(self._joints_num):
+                interp_p[j] = curr_pos_ref[j] + frac * (target_pos[j] - curr_pos_ref[j])
+
+                # update stored so other code sees intermediate values
+                self._prefs[j] = interp_p[j]
+
+            # send to robot
+            self._robot_interface.setPositionReference(self._prefs)
+            self._robot_interface.move()
+            
+            # finish condition
+            if frac >= 1.0:
+                break
+
+        ggLog.info(f"Linear position ramp finished after {elapsed:.3f}s.")
+        # final enforce exact target values (sets exact targets if ramp completed;
+        # self.apply_joint_impedances(joint_impedances_pvesd)
+    
+    @override
+    def apply_joint_impedances_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
+                                ramp_time = None):
+        """
+        Linearly ramp stiffness (p gains) and damping (v gains) from current
+        values to targets over the configured ramp time.
+        """
+        # quick return for empty input
+        if len(joint_impedances_pvesd) == 0:
+            return
+
+        if ramp_time is None:
+            ramp_time=self.impedance_ramp_time
+
+        # convert tensor or mapping to dict keyed by (model_name,jname)
+        if isinstance(joint_impedances_pvesd, th.Tensor):
+            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
+        elif isinstance(joint_impedances_pvesd, Mapping):
+            joint_impedances_pvesd_dict = joint_impedances_pvesd
+        else:
+            raise TypeError("joint_impedances_pvesd must be a Mapping or a torch.Tensor")
+
+        # map commanded values to joint ids
+        commanded_joint_impedances_by_jid = {}
+        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
+            model_name, jname = full_jname
+            if model_name != self._model_name:
+                raise RuntimeError(
+                    f"Commanded joint impedance for model different from the controlled one "
+                    f"(asked '{model_name, jname}', but have '{self._model_name}')"
+                )
+            jid = self._xbotjname_to_jid[jname]
+            commanded_joint_impedances_by_jid[jid] = jcmd
+
+        # prepare current refs and target arrays
+        curr_stiffness = list(self._robot_interface.getStiffness())
+        curr_damping = list(self._robot_interface.getDamping())
+
+        # prepare target arrays (default to current to avoid NaNs)
+        target_stiffness = [float(curr_stiffness[j]) for j in range(self._joints_num)]
+        target_damping   = [float(curr_damping[j])   for j in range(self._joints_num)]
+
+        # Linear ramp: compute from initial to target over ramp_time
+        initial_p = [float(x) for x in curr_stiffness]
+        initial_v = [float(x) for x in curr_damping]
+
+        start_time=self.getEnvTimeFromStartup()
+        elapsed=0.0
+
+        ggLog.info(f"Starting linear impedance ramp for {ramp_time:.3f}s (sleep {self._impedance_ramp_tinysleep:.4f}s)...")
+
+        while True:
+            now = self.getEnvTimeFromStartup()
+            elapsed = now - start_time
+            frac = min(1.0, max(0.0, elapsed / ramp_time))
+
+            # compute interpolated gains
+            interp_p = [0.0] * self._joints_num
+            interp_v = [0.0] * self._joints_num
+            for j in range(self._joints_num):
+                interp_p[j] = initial_p[j] + frac * (target_stiffness[j] - initial_p[j])
+                interp_v[j] = initial_v[j] + frac * (target_damping[j] - initial_v[j])
+
+                # update stored so other code sees intermediate values
+                self._pgains[j] = interp_p[j]
+                self._vgains[j] = interp_v[j]
+
+            # send to robot
+            self._robot_interface.setStiffness(interp_p)
+            self._robot_interface.setDamping(interp_v)
+
+            self._robot_interface.move()
+
+            # finish condition
+            if frac >= 1.0:
+                break
+
+        # final enforce exact target values (sets exact targets if ramp completed;
+        self.apply_joint_impedances(joint_impedances_pvesd)
+
+        ggLog.info(f"Linear impedance ramp finished after {elapsed:.3f}s.")

@@ -4,19 +4,38 @@ project(adarl_ros_utils)
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11 -Wall )
 
-## Find catkin macros and libraries
-## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
-## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS
+# Conditionally set the dependencies list
+set(MOVEIT_DEPENDS)
+option(WITH_MOVEIT "Compile moveit-related components" TRUE)
+if(WITH_MOVEIT)
+  message(STATUS "Will compile moveit-related components.")
+  list(APPEND MOVEIT_DEPENDS
+    rviz_visual_tools
+    moveit_core
+    moveit_ros_planning
+    moveit_ros_planning_interface
+    moveit_ros_perception
+  )
+endif()
+
+set(ROS_CONTROL_DEPENDS)
+option(WITH_ROS_CONTROL "Compile ros_control-related components" TRUE)
+if(WITH_ROS_CONTROL)
+  message(STATUS "Will compile ros_control-related components.")
+  list(APPEND ROS_CONTROL_DEPENDS
+    controller_interface
+    hardware_interface
+    realtime_tools
+  )
+endif()
+
+set(CATKIN_DEPENDS_ALL)
+list(APPEND CATKIN_DEPENDS_ALL
   roscpp
   rospy
   std_msgs
-  moveit_core
-  moveit_ros_planning
-  moveit_ros_planning_interface
-  moveit_ros_perception
+  interactive_markers
   actionlib_msgs
-  rviz_visual_tools
   tf2
   tf2_ros
   tf2_geometry_msgs
@@ -27,17 +46,16 @@ find_package(catkin REQUIRED COMPONENTS
   kdl_parser
   kdl_conversions
   geometry_msgs
-  controller_interface
-  hardware_interface
   pluginlib
-  realtime_tools
+  ${ROS_CONTROL_DEPENDS}
+  ${MOVEIT_DEPENDS}
 )
 
-## System dependencies are found with CMake's conventions
-
+find_package(catkin REQUIRED COMPONENTS
+  ${CATKIN_DEPENDS_ALL}
+)
 find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
-
 find_package(orocos_kdl REQUIRED)
 find_package(urdfdom_headers REQUIRED)
 
@@ -92,22 +110,7 @@ catkin_package(
   LIBRARIES adarl_ros_utils
   INCLUDE_DIRS include
   CATKIN_DEPENDS
-    roscpp
-    rospy
-    std_msgs
-    moveit_core
-    moveit_visual_tools
-    moveit_ros_planning_interface
-    interactive_markers
-    tf2_geometry_msgs
-    actionlib_msgs
-    geometry_msgs
-    rviz_visual_tools
-    tf2
-    tf2_ros
-	  kdl_parser
-	  kdl_conversions
-
+    ${CATKIN_DEPENDS_ALL}
   DEPENDS
     EIGEN3
 	  orocos_kdl
@@ -128,22 +131,24 @@ include_directories(
 
 link_directories(${orocos_kdl_LIBRARY_DIRS})
 
-
-add_executable(move_helper src/move_helper.cpp)
-add_dependencies(move_helper ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-target_link_libraries(move_helper ${catkin_LIBRARIES} ${Boost_LIBRARIES})
-
-
-
+if(WITH_MOVEIT)
+  add_executable(move_helper src/move_helper.cpp)
+  add_dependencies(move_helper ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+  target_link_libraries(move_helper ${catkin_LIBRARIES} ${Boost_LIBRARIES})
+endif()
 
 # Declare a C++ library
 add_library(adarl_ros_utils
-src/GravityCompensatedEffortController.cpp
-src/LinkStatePublisherController.cpp
+# src/GravityCompensatedEffortController.cpp
 src/ForwardKinematicsComputer.cpp
 src/KdlHelper.cpp
-src/CartesianPositionController.cpp
+# src/CartesianPositionController.cpp
 )
+if (WITH_ROS_CONTROL)
+add_library(adarl_ros_utils
+src/LinkStatePublisherController.cpp
+)
+endif()
 
 add_dependencies(adarl_ros_utils
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
@@ -174,9 +179,9 @@ install(TARGETS adarl_ros_utils
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-install(DIRECTORY launch
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-)
+# install(DIRECTORY launch
+#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+# )
 install(DIRECTORY config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )

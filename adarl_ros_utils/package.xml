@@ -56,6 +56,10 @@
   <depend>geometry_msgs</depend>
   <depend>actionlib_msgs</depend>
   <depend>rviz_visual_tools</depend>
+  <depend>tf2_eigen</depend>
+  <depend>tf2_kdl</depend>
+  <depend>tf2_msgs</depend>
+  <depend>tf2_py</depend>
   <depend>tf2_ros</depend>
   <depend>tf2</depend>
   <depend>tf2_geometry_msgs</depend>
