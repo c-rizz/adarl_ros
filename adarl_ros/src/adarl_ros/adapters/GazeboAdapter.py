@@ -4,6 +4,8 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Tuple, Union, Mapping
 
+from torch._tensor import Tensor
+
 import gazebo_gym_env_plugin.msg
 import gazebo_gym_env_plugin.srv
 import adarl.utils.dbg.ggLog as ggLog
@@ -103,20 +105,20 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         request.step_duration_picosecs = duration_pico
         request.request_time = time.time()
         #ggLog.info("self._camerasToObserve = "+str(self._camerasToObserve))
-        if len(self._camerasToObserve)>0:
+        if len(self._monitored_cameras)>0:
             #ggLog.info("Performing rendering within step")
             request.render = True
-            request.cameras = self._camerasToObserve
-        if len(self._jointsToObserve)>0:
+            request.cameras = self._monitored_cameras
+        if len(self._monitored_joints)>0:
             request.requested_joints = []
-            for j in self._jointsToObserve:
+            for j in self._monitored_joints:
                 jointId = gazebo_gym_env_plugin.msg.JointId()
                 jointId.joint_name = j[1]
                 jointId.model_name = j[0]
                 request.requested_joints.append(jointId)
-        if len(self._linksToObserve)>0:
+        if len(self._monitored_links)>0:
             request.requested_links = []
-            for l in self._linksToObserve:
+            for l in self._monitored_links:
                 linkId = gazebo_gym_env_plugin.msg.LinkId()
                 linkId.link_name  = l[1]
                 linkId.model_name = l[0]
@@ -151,21 +153,21 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         #rospy.loginfo("Transfer time of stepping response = "+str(time.time()-response.response_time))
 
 
-        if len(self._camerasToObserve)>0:
+        if len(self._monitored_cameras)>0:
             if not response.render_result.success:
                 ggLog.warn("Error getting renderings: "+response.render_result.error_message)
             for i in range(len(response.render_result.camera_names)):
                 #ggLog.info("got image for camera "+response.render_result.camera_names[i])
                 self._simulationState.cameraRenders[response.render_result.camera_names[i]] = (response.render_result.images[i],response.render_result.camera_infos[i])
 
-        if len(self._jointsToObserve)>0:
+        if len(self._monitored_joints)>0:
             if not response.joints_info.success:
                 ggLog.warn("Error getting joint information: "+response.joints_info.error_message)
             for ji in response.joints_info.joints_info:
                 # ggLog.info(f"Got joint info {(ji.joint_id.model_name,ji.joint_id.joint_name)} = {ji}")
                 self._simulationState.jointsState[(ji.joint_id.model_name,ji.joint_id.joint_name)] = ji
 
-        if len(self._linksToObserve)>0:
+        if len(self._monitored_links)>0:
             if not response.links_info.success:
                 ggLog.warn("Error getting link information: "+response.joints_info.error_message)
             for li in response.links_info.links_info:
@@ -229,7 +231,6 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
 
     @override
     def getJointsState(self, requestedJoints : List[tuple[str,str]]) -> dict[tuple[str,str],JointState]:
-
         if self._simulationState.stepNumber!=self._episode_steps_taken: #If no step has ever been done
             return super().getJointsState(requestedJoints)
 
@@ -254,7 +255,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
 
             linkState = LinkState(  position_xyz = (linkInfo.pose.position.x, linkInfo.pose.position.y, linkInfo.pose.position.z),
                                     orientation_xyzw = (linkInfo.pose.orientation.x, linkInfo.pose.orientation.y, linkInfo.pose.orientation.z, linkInfo.pose.orientation.w),
-                                    pos_velocity_xyz = (linkInfo.twist.linear.x, linkInfo.twist.linear.y, linkInfo.twist.linear.z),
+                                    pos_com_velocity_xyz = (linkInfo.twist.linear.x, linkInfo.twist.linear.y, linkInfo.twist.linear.z),
                                     ang_velocity_xyz = (linkInfo.twist.angular.x, linkInfo.twist.angular.y, linkInfo.twist.angular.z))
             ret[rl] = linkState
         return ret
@@ -283,6 +284,8 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
         return r
     
     def set_sim_joint_limits(self, joint_limits_minmax : Mapping[JointName, tuple[float | None,float  | None]]):
+        if len(joint_limits_minmax)==0:
+            return
         for (model_name, joint_name), (min_pos, max_pos) in joint_limits_minmax.items():
             msg = gazebo_gym_env_plugin.srv.SetJointPropertiesRequest()
             jp = gazebo_gym_env_plugin.msg.JointProperties()
@@ -298,6 +301,8 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
             raise RuntimeError(f"Failed to set joint limits: {res}")
         
     def get_sim_joint_limits(self, joint_names : list[JointName]) -> dict[JointName, tuple[float,float]]:
+        if len(joint_names) == 0:
+            return {}
         for (model_name, joint_name) in joint_names:
             msg = gazebo_gym_env_plugin.srv.SetJointPropertiesRequest()
             jp = gazebo_gym_env_plugin.msg.JointProperties()
@@ -316,3 +321,7 @@ class GazeboAdapter(GazeboAdapterNoPlugin):
 
         return {(jp.joint_id.model_name, jp.joint_id.joint_name): (jp.position_limit_low[0], jp.position_limit_high[0])
                  for jp in res.resulting_joint_properties}
+
+    @override
+    def get_joints_state_step_stats(self) -> Tensor:
+        raise NotImplementedError()

@@ -42,8 +42,6 @@ import math
 # XBOT helper functions
 # ------------------------------------------------------------------------------------------
 
-
-
 def build_xbot_cfg(is_floating_base, 
             urdf: str = None, 
             srdf: str= None):
@@ -90,7 +88,6 @@ def build_xbot_cfg(is_floating_base,
     cfg.set_string_parameter('model_type', 'RBDL')
     cfg.set_string_parameter('framework', 'ROS')    
     return cfg
-
 
 def get_link_names(robot):
     urdf = URDF.from_xml_string(robot.getUrdfString())
@@ -190,30 +187,26 @@ def wait_for_ros_service(server_name: str, timeout=1.0):
         rospy.wait_for_service(server_name, timeout=timeout)
     except rospy.exceptions.ROSException:
         ggLog.warn(f"wait for service {server_name} timeouted.")
-        False
+        return False
     return True
 
-def is_simulated():
+def detect_simulated():
     # Is here some better way to do this?
     # Can I ask xbot?
     switch_srv_name = "/xbotcore/get_parameter_value"
     hw_type_param_name="/xbot/hal/hw_type"
-    service_avail=wait_for_ros_service(switch_srv_name, timeout=1.0)
+    service_avail=wait_for_ros_service(switch_srv_name, timeout=10.0)
     if not service_avail:
+        ggLog.warn(f"Failed to call sevice proxy for {switch_srv_name} with request of type {hw_type_param_name}")
         return False
     get_param_value_srv = rospy.ServiceProxy(switch_srv_name, GetStringList)
-    try:
-        res=get_param_value_srv(hw_type_param_name)
-        if not res.success:
-            raise RuntimeError(f"Failed to get hw type parameter from XBot!")
-        
-        hw_type=res.response[0]
-        
-        return hw_type=="sim"
-    except:
-        ggLog.warn(f"Failed to call sevice proxy for {switch_srv_name}")
-        return False
-
+    res=get_param_value_srv(hw_type_param_name)
+    if not res.success:
+        raise RuntimeError(f"Failed to get hw type parameter from XBot!")
+    
+    hw_type=res.response[0]
+    
+    return hw_type=="sim"
 class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAdapter):
 
     def __init__(self,  model_name : str,
@@ -233,8 +226,19 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         jpos_cmd_max_acc_default = 0.0,
                         enable_filters = True,
                         imu_link: str = "imu_link",
-                        base_link : str = "imu_link"):
-        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation)
+                        base_link : str = "imu_link",
+                        position_commands_stiffness : float = 100.0,
+                        position_commands_damping : float = 10.0,
+                        is_simulated : bool | None = None,
+                        walltime_factor : float = 1.0,
+                        run_asynch_while_init: bool = False,
+                        asynch_run_duration: float = 10.0):
+        
+        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation, walltime_factor=walltime_factor)
+
+        self._run_asynch_while_init=run_asynch_while_init
+        self._asynch_run_duration=asynch_run_duration
+
         self._is_floating_base = is_floating_base
         self._imu_link= imu_link
         self._base_link = base_link
@@ -249,8 +253,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._joint_device_info_mutex = RLock()
         self._joint_device_info_cv = Condition(self._joint_device_info_mutex)
         self._last_joint_device_info : JointDeviceInfo | None = None
-        self._position_command_stiffness = 100.0
-        self._position_command_damping = 50.0
+        self._position_command_stiffness = position_commands_stiffness
+        self._position_command_damping = position_commands_damping
         self._commanded_joint_positions : Dict[Tuple[str,str],Tuple[float,float,float]] = {}
         # joint trajectories are ndarrays listing waypoints of format (time, position, velocuty, acceleration)
         self._commanded_joint_trajs_tpva : Dict[Tuple[str,str],np.ndarray]= {}
@@ -270,39 +274,45 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._last_jdi_time = float("-inf")
         self._enable_filters = enable_filters
         self._jimpedance_controlled_joints : list[tuple[str,str]] = []
+        self._control_dt = 0.001 # can I get this from somewhere?
 
         self.impedance_ramp_time=2.0 # [s]
         self.position_ramp_time=5.0  # [s] for position ref ramps
         self._impedance_ramp_tinysleep=0.005
         self._position_ramp_tinysleep=0.005
 
+        self._is_simulated = False
+        
+    def is_simulated(self):
+        return self._is_simulated
+
     def _joint_device_info_callback(self, msg):
         with self._joint_device_info_mutex:
-            self._last_jdi_time = self.getEnvTimeFromReset()
+            self._last_jdi_time = self.getEnvTimeFromStartup()
             self._last_joint_device_info = msg
     
     def _xbot_statistics_callback(self, msg):
         self._xbot_task_stats=msg.task_stats
         
-    def _imu_device_callback(self, msg):
-        # read imu data from xbot topic
-        self._imu_frame = msg.header.frame_id
+    # def _imu_device_callback(self, msg):
+    #     # read imu data from xbot topic
+    #     self._imu_frame = msg.header.frame_id
 
-        orientation = msg.orientation
-        self._imu_q_last[:, 0]=orientation.w 
-        self._imu_q_last[:, 1]=orientation.x
-        self._imu_q_last[:, 2]=orientation.y
-        self._imu_q_last[:, 3]=orientation.z
+    #     orientation = msg.orientation
+    #     self._imu_q_last[:, 0]=orientation.w 
+    #     self._imu_q_last[:, 1]=orientation.x
+    #     self._imu_q_last[:, 2]=orientation.y
+    #     self._imu_q_last[:, 3]=orientation.z
 
-        omega=msg.angular_velocity
-        self._imu_omega_last[:, 0]=omega.x
-        self._imu_omega_last[:, 1]=omega.y
-        self._imu_omega_last[:, 2]=omega.z
+    #     omega=msg.angular_velocity
+    #     self._imu_omega_last[:, 0]=omega.x
+    #     self._imu_omega_last[:, 1]=omega.y
+    #     self._imu_omega_last[:, 2]=omega.z
 
-        lin_acc=omega=msg.angular_velocity
-        self._imu_linacc_last[:, 0]=lin_acc.x
-        self._imu_linacc_last[:, 1]=lin_acc.y
-        self._imu_linacc_last[:, 2]=lin_acc.z
+    #     lin_acc=omega=msg.angular_velocity
+    #     self._imu_linacc_last[:, 0]=lin_acc.x
+    #     self._imu_linacc_last[:, 1]=lin_acc.y
+    #     self._imu_linacc_last[:, 2]=lin_acc.z
 
     @override
     def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
@@ -315,13 +325,18 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def fallback_damping(self):
         return self._fallback_cmd_damping
 
-    def startup(self, 
-        urdf: str = None, 
-        srdf: str= None):
-        super().startup()
-        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base, urdf=urdf, srdf=srdf)
+    def startup(self, urdf: str = None, srdf: str = None):
 
-        import time
+        super().startup()
+        
+        if self._run_asynch_while_init:            
+            self.run_async(duration_sec=self._asynch_run_duration) 
+        
+        self._is_simulated = detect_simulated()
+        ggLog.info(f"RosXbotAdapter detected simulated = {self._is_simulated}")
+
+        cfg = build_xbot_cfg(is_floating_base=self._is_floating_base, urdf=urdf, srdf=srdf)
+        
         wait_for_sec=1.5 # [s]
         timeout_sec=60.0
         t0 = time.monotonic()
@@ -370,6 +385,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             self._joint_device_info_callback, queue_size=1)
         ggLog.info(f"Subscribed to {joint_dev_topicname}")
         
+        if self._run_asynch_while_init:
+            self.stop_run_async()
+
         # imu_topic_name = "/xbotcore/imu/"+self._imu_link
         # self._imu_frame="none"
         # self._imu_q_last=np.zeros((1, 4))
@@ -387,6 +405,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._base_omega_last=np.zeros((1, 3))
         self._base_linacc_last=np.zeros((1, 3))
 
+        ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
+
+        self._jimpedance_controlled_joints_jids = np.array([self._xbotjname_to_jid[jn] for model_name,jn in self._jimpedance_controlled_joints])
+        
         # preallocating cmds
         self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._vrefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
@@ -397,24 +419,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def set_filters(self, set_enabled : bool, profile_name = "safe"):
         set_filters(set_enabled=set_enabled,profile_name=profile_name)
     
-    # def get_imu_data(self):
-    #     return (self._imu_frame, self._imu_q_last, self._imu_omega_last, self._imu_linacc_last)
-    
-    def get_base_link_state(self):
-        return (self._base_link, self._base_q_last, self._base_omega_last, self._base_linacc_last)
-    
-    def read_imu_data(self):
-        
-        # update base link state (if not provided == imu_link)
-        R_world_imu=self._xbot_imu.getOrientation()
-        R_world_link=R_world_imu@self._R_imu_link # orientation of base link wrt world frame
-        omega_imu_loc=self._xbot_imu.getAngularVelocity() # IMU local !!
-        
-        self._base_q_last[:, :]=mat2quat(R_world_link) # IMPORTANT: returns quaterion in w,x,y,z order    
-        self._base_omega_last[:, :]= self._R_imu_link.T @ omega_imu_loc # rotate from IMU to base link frame
-        self._base_linacc_last[:, :]=self._R_imu_link.T @ self._xbot_imu.getLinearAcceleration() # we would need to account
-        # for linear velocity and angular acc to do it properly (accurate only if imu==base_link)
-        
     def _is_xbot_task_running(self,task_name: str):
         task_id=self._xbot_task_info_map[task_name]
         return self._xbot_task_stats[task_id].state=="Running"
@@ -534,10 +538,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             return ret
 
     @override
-    def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
+    def getLinksState(self, requestedLinks : List[Tuple[str,str]], use_com_pose = False) -> Dict[Tuple[str,str],LinkState]:
         if not self._listenersStarted:
             raise RuntimeError("called getLinksState without having called startController. The proper way to initialize the controller is to first build the controller, then call set_monitored_links, and then call startController")
-
+        if use_com_pose:
+            raise NotImplementedError(f"use_com_frame not supported")
         #print("self._linksToObserve = "+str(self._linksToObserve))
         for l in requestedLinks:
             if l not in self._linksToObserve:
@@ -565,7 +570,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
             ls = LinkState(position_xyz=th.as_tensor(lpose.translation).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
                            orientation_xyzw=th.as_tensor(lpose.quaternion).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
-                           pos_velocity_xyz=th.as_tensor(ltwist[:3]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
+                           pos_com_velocity_xyz=th.as_tensor(ltwist[:3]).to(device=self._torch_device, non_blocking=True, dtype=th.float32),
                            ang_velocity_xyz=th.as_tensor(ltwist[3:]).to(device=self._torch_device, non_blocking=True, dtype=th.float32))
             ret[full_link_name] = ls
             
@@ -579,7 +584,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def setJointsImpedanceCommand(self, joint_impedances_pvesd : Mapping[Tuple[str,str],Tuple[float,float,float,float,float]] | th.Tensor,
                                         delay_sec : float = 0) -> None:
         if delay_sec!=0.0:
-            raise NotImplementedError()
+            raise NotImplementedError("Impedance command delay is not supported")
         
         if isinstance(joint_impedances_pvesd, th.Tensor):
             joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
@@ -640,6 +645,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._robot_interface.setVelocityReference(self._vrefs)
         self._robot_interface.setEffortReference(self._erefs)
         self._robot_interface.move()
+
         # ggLog.info(f"Sent robot_interface command")
 
     @override
@@ -852,6 +858,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self.setJointsImpedanceCommand(joint_impedances_pvesd = jimp_cmds_pvesd)
 
     def _apply_commanded_joint_positions(self):
+
+        if len(self._commanded_joint_positions)==0:
+            return
+            
         jimp_pvesd_cmds : Dict[Tuple[str,str],Tuple[float,float,float,float,float]] = {}
         js = self.getJointsState(list(self._commanded_joint_positions.keys()))
         for jn,p_ref_velsc_accsc in self._commanded_joint_positions.items():
@@ -883,8 +893,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     @override
     def run(self, duration_sec: float):
+        # ggLog.info(f"XbotAdapter.run()")
         self._apply_controls()
         super().run(duration_sec)
+
+    @override
+    def initialize_for_step(self):
+        pass
 
     @override
     def step(self) -> float:
@@ -904,7 +919,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         return step_duration
 
-    def _switch_control(self, switch_on : bool, timeout_s : float = float("+inf")) -> bool:
+    def _switch_control(self, switch_on : bool, timeout_s : float = 5.) -> bool:
         # for i in range(20):
         #     time.sleep(1)
         #     print(i)
@@ -969,12 +984,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         return jdi.mask
 
     @override
-    def resetWorld(self):
-        super().resetWorld()
+    def initialize_for_episode(self):
+        super().initialize_for_episode()
         self.clear_commands()
         self._last_jdi_time = float("-inf")
         self._last_joint_device_info = None
-        if is_simulated():
+        if self.is_simulated():
             req_mask = 255
             mask = self._setup_joint_control(control_mask = req_mask)
             if mask != req_mask:
@@ -1004,36 +1019,54 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                                     velocity_scaling : Optional[float] = None,
                                     acceleration_scaling : Optional[float] = None,
                                     joint_position_tolerance : float = 0.01,
-                                    max_time_s : float = 60) -> None:
+                                    max_time_s : float = 60,
+                                    joint_velocity_termination_threshold = 0.01,
+                                    joint_velocity_scaling : dict[Tuple[str,str],float] = {}) -> None:
         self.clear_commands()
         if velocity_scaling is None:
             velocity_scaling = 1.0
         if acceleration_scaling is None:
             acceleration_scaling = 1.0
         js = self.getJointsState(list(jointPositions.keys()))
+        last_refs = self.get_current_joint_impedance_command()
+        last_refs_dict = {self._jimpedance_controlled_joints[i]:last_refs[i] for i in range(len(self._jimpedance_controlled_joints))}
         max_traj_duration = 0
         joint_trajs = {}
         for jn,p_ref in jointPositions.items():
             # just to compute the duration
-            traj_tpva = build_1D_vramp_trajectory(  t0 = self.getEnvTimeFromStartup(),
-                                                    p0 = js[jn].position.item(),
+            vs = joint_velocity_scaling.get(jn, velocity_scaling)
+            traj_tpva = build_1D_vramp_trajectory(  t0 = 0.0,
+                                                    p0 = last_refs_dict[jn][0].item(),
                                                     v0 = js[jn].rate.item(),
                                                     pf = p_ref,
                                                     ctrl_freq_hz = 1000.0,
-                                                    max_vel=self._jpos_cmd_max_vel.get(jn, self._jpos_cmd_max_vel_default)*velocity_scaling,
+                                                    max_vel=self._jpos_cmd_max_vel.get(jn, self._jpos_cmd_max_vel_default)*vs,
                                                     max_acc=self._jpos_cmd_max_acc.get(jn, self._jpos_cmd_max_acc_default)*acceleration_scaling)
             joint_trajs[jn] = traj_tpva
             traj_duration = traj_tpva[-1][0]
-            max_traj_duration = max(0,traj_duration)
-        timeout_env = max_traj_duration*2
+            max_traj_duration = max(max_traj_duration,traj_duration)
+        for jn,p_ref in jointPositions.items(): # scale to have all trajectories be the same duration
+            joint_traj = joint_trajs[jn]
+            traj_duration = joint_traj[-1][0]
+            scale = max_traj_duration/traj_duration
+            joint_traj[:,0] *= scale # time
+            joint_traj[:,2] *= 1/scale # velocity
+            joint_traj[:,3] *= 1/(scale**2) # acceleration
+        # ggLog.info(f"traj_tpva = \n{traj_tpva}")
+        timeout_env = max_traj_duration*2+1
         timeout_wall = timeout_env*20
         if max_traj_duration > max_time_s:
             raise RuntimeError(f"Computed trajectory is excessively long, would last {max_traj_duration}s, max_time is set to {max_time_s}s. \n"
-                               f"Initial joint state was: {[(jn,ji.position.item(),ji.rate.item()) for jn,ji in js.items()]}\n"
-                               f"Target joint position was: {jointPositions}\n"
+                               f"Joint names           : {[jn for jn,ji in js.items()]}\n"
+                               f"Initial joint position: "+str([f"{ji.position.item(): 2.4f}" for jn,ji in js.items()])+"\n"
+                               f"Initial joint velocity: "+str([f"{ji.rate.item(): 2.4f}" for jn,ji in js.items()])+"\n"
+                               f"Target  joint position: "+str([f"{jp: 2.4f}" for jp in jointPositions.values()])+"\n"
                                f"Durations {[(jn,traj_tpva[-1][0]) for jn,traj_tpva in joint_trajs.items()]}\n"
-                               f"Raise it if it is actually ok.")
+                               f"Raise the max_time if it is actually ok.")
         # print(f"joint_trajs max_v = {max([max(t[2]) for t in joint_trajs.values() ])}")
+        t0 = self.getEnvTimeFromStartup()
+        for jn in joint_trajs.keys():
+            joint_trajs[jn][:,0] += t0
         self._setJointTrajectoryCommand(jointTrajectories_tpva = joint_trajs)
 
         # self.setJointsPositionCommand(jointPositions=jointPositions)
@@ -1044,11 +1077,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         reached_position = all([abs(e) < joint_position_tolerance for e in errors])
         elapsed_env_time = 0.0
         elapsed_wall_time = 0.0
-        while not reached_position:
+        stopped = False
+        while not (reached_position or (stopped and elapsed_env_time>=max_traj_duration)):
             self.run(self._stepLength_sec)
             js = self.getJointsState(list(jointPositions.keys()))
             errors = [ji.position.item() - jointPositions[jn] for jn,ji in js.items()]
             reached_position = all([abs(e) < joint_position_tolerance for e in errors])
+            stopped = all([abs(ji.rate.item())<joint_velocity_termination_threshold for ji in js.values()])
             elapsed_env_time = self.getEnvTimeFromStartup() - t0_env
             elapsed_wall_time = time.monotonic() - t0_wall
             if elapsed_env_time > timeout_env:
@@ -1057,6 +1092,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                                     f"    target = {jointPositions}\n"
                                     f"    joint state = {[ji.position.item() for jn,ji in js.items()]}\n"
                                     f"    errors = {errors}\n"
+                                    f"    max_error = {max(errors)}\n"
                                     f"    tolerance = {joint_position_tolerance}")
             if elapsed_wall_time > timeout_wall:
                 self.clear_commands()
@@ -1067,22 +1103,109 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     
     def get_joints_state_step_stats(self):
         raise NotImplementedError()
+
+    def is_safety_triggered(self):
+        raise NotImplementedError()
     
-    def quat2rotation(self, qwijk: np.ndarray):
+    def _get_current_refs_pvesd(self):
+        self._robot_interface.sense(update_references=True)
+        return np.stack([   self._robot_interface.getPositionReference(),
+                            self._robot_interface.getVelocityReference(),
+                            self._robot_interface.getEffortReference(),
+                            self._robot_interface.getStiffness(),
+                            self._robot_interface.getDamping()], axis = 1)
 
-        q_w, q_i, q_j, q_k = qwijk[0, 0], qwijk[0, 1], qwijk[0, 2], qwijk[0, 3]
-
-        R=np.zeros((3,3))
-        R[0, 0] = 1 - 2 * (q_j ** 2 + q_k ** 2)
-        R[0, 1] = 2 * (q_i * q_j - q_k * q_w)
-        R[0, 2] = 2 * (q_i * q_k + q_j * q_w)
+    @override
+    def get_current_joint_impedance_command(self) -> th.Tensor:
+        ref_j_pvesd = self._get_current_refs_pvesd()
+        # pvesd_by_name = {(mn,jn):ref_j_pvesd[self._xbotjname_to_jid[jn]] for mn,jn in self._jimpedance_controlled_joints}
+        return th.as_tensor(ref_j_pvesd[self._jimpedance_controlled_joints_jids], device=self._torch_device, dtype=th.float32)
+    
+    @override
+    def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        imus = self._robot_interface.getImu()
+        # print(f"imus = {imus}")
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
+        ref_imus : dict[str,str] = {} # What imu to use for which links
+        for rl in req_links:
+            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
+        link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
+        orientation_mats = [link2imu_poses[ln].matrix()[:3,:3]*imus[ref_imus[ln]].getOrientation() for ln in req_links]
+        # Gravity direction is rotmat*[0,0,-1], which is -1 by the last colunn of rotmat
+        gdirs = [-th.as_tensor(m[2,:]) for m in orientation_mats]
+        return th.stack(gdirs)
+    
+    @override
+    def get_link_relative_angular_velocity(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        imus = self._robot_interface.getImu()
+        # print(f"imus = {imus}")
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
+        ref_imus : dict[str,str] = {} # What imu to use for which links
+        for rl in req_links:
+            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
+        link2imu_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
+        angvels = [self._thtens(np.matmul(link2imu_poses[ln].matrix()[:3,:3],imus[ref_imus[ln]].getAngularVelocity())) for ln in req_links]
+        # for ln in req_links:
+        #     ggLog.info(f"imu angvel = {imus[ref_imus[ln]].getAngularVelocity().transpose()}")
+        #     ggLog.info(f"link2imu_poses[ln].matrix()[:3,:3] = {link2imu_poses[ln].matrix()[:3,:3]}")
+        # ggLog.info(f"angvels = {angvels}")
+        return th.stack(angvels)
+    
+    def control_period(self):
+        return self._control_dt
         
-        R[1, 0] = 2 * (q_i * q_j + q_k * q_w)
-        R[1, 1] = 1 - 2 * (q_i ** 2 + q_k ** 2)
-        R[1, 2] = 2 * (q_j * q_k - q_i * q_w)
-        
-        R[2, 0] = 2 * (q_i * q_k - q_j * q_w)
-        R[2, 1] = 2 * (q_j * q_k + q_i * q_w)
-        R[2, 2] = 1 - 2 * (q_i ** 2 + q_j ** 2)
+    def _thtens(self, arr: np.ndarray) -> th.Tensor:
+        """Convert a numpy array to a torch tensor on the configured device."""
+        return th.as_tensor(arr, device=self._torch_device)
+    
+    def get_local_link_linear_acceleration(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
+        imus = self._robot_interface.getImu()
+        # print(f"imus = {imus}")
+        if requestedLinks is None:
+            requestedLinks = self._monitored_links
+        req_links = [ln[1] for ln in requestedLinks] # Remove the model name
+        ref_imus : dict[str,str] = {} # What imu to use for which links
+        for rl in req_links:
+            ref_imus[rl] = rl if rl in imus else list(imus.keys())[0] # use the first available imu (maybe we can do better than this? find a "best" one?)
+        imu2link_poses : dict[str,Affine3] = {ln:self._robot_interface.model().getPose(ln,ref_imus[ln]) for ln in req_links}
+        accelerations : list[th.Tensor] = []
+        for ln in req_links:
+            imu2link = imu2link_poses[ln]
+            imu2link_rotmat = imu2link.matrix()[:3,:3]
+            imu = imus[ref_imus[ln]]
+            imu_linacc = imu.getLinearAcceleration()
+            if np.allclose(imu2link_rotmat, np.eye(imu2link_rotmat.shape[0]), atol=1e-5):
+                acceleration = imu_linacc
+            else:
+                raise RuntimeError(f"Cannot compute local linear acceleration for link '{ln}' as it is not directly attached to an IMU")
+                com_offset_xyz = imu2link.translation()
+                imu_angvel = imu.getAngularVelocity()
+                imu_angacc # Would need this somehow
+                imu_linvel # Would need this somehow
+                local_angvel = imu2link_rotmat @ imu_linacc
+                local_linvel = imu2link_rotmat @ (imu_linvel - np.cross(com_offset_xyz, imu_angvel))
+                acc = imu2link_rotmat @ (imu_linacc - np.cross(com_offset_xyz, imu_angacc))
+                correction = np.cross(local_angvel, local_linvel)
+                acceeleration = acc + correction
+            accelerations.append(self._thtens(acceleration))
+        return th.stack(accelerations)
 
-        return R
+    def get_base_link_state(self):
+        return (self._base_link, self._base_q_last, self._base_omega_last, self._base_linacc_last)
+    
+    def read_imu_data(self):
+        
+        # update base link state (if not provided == imu_link)
+        R_world_imu=self._xbot_imu.getOrientation()
+        R_world_link=R_world_imu@self._R_imu_link # orientation of base link wrt world frame
+        omega_imu_loc=self._xbot_imu.getAngularVelocity() # IMU local !!
+        
+        self._base_q_last[:, :]=mat2quat(R_world_link) # IMPORTANT: returns quaterion in w,x,y,z order    
+        self._base_omega_last[:, :]= self._R_imu_link.T @ omega_imu_loc # rotate from IMU to base link frame
+        self._base_linacc_last[:, :]=self._R_imu_link.T @ self._xbot_imu.getLinearAcceleration() # we would need to account
+        # for linear velocity and angular acc to do it properly (accurate only if imu==base_link)
+        

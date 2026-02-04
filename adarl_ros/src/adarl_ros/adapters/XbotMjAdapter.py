@@ -12,12 +12,11 @@ from xbot2_mujoco.PyXbotMjSim import XBotMjSim
 
 import numpy as np
 
-import time
 import torch as th
-import rospy
-import os
+
 from typing_extensions import override
 
+import rospy
 class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     ):
 
@@ -54,6 +53,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         """Initialize the Simulator.
 
         """
+
+        rospy.set_param('/use_sim_time', True) # ros adapter will wait for this param
+
         self._render_to_file=render_to_file
         self._render_fps=render_fps
         self._model_fpath=model_fpath
@@ -66,6 +68,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         self._xmj_sim=None
         self._abs_sim_timer=0
         self._sim_time=0
+        self._sim_thread_stop = None
+        self._sim_thread = None
         sim_ok=self._init_simulation(base_link) # after this, all data from sim is available
         if not sim_ok:
             msg="Failed to initialize simulation!!"
@@ -95,7 +99,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
                         jpos_cmd_max_acc=jpos_cmd_max_acc,
                         jpos_cmd_max_acc_default=jpos_cmd_max_acc_default,
                         enable_filters=enable_filters,
-                        base_link=base_link)
+                        base_link=base_link,
+                        run_asynch_while_init=True,
+                        asynch_run_duration=60.0)
 
         joints_to_observe = [(model_name, joint) for joint in self._xmj_sim_jnt_names]
         self.set_monitored_joints(joints_to_observe)
@@ -207,21 +213,18 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
     
     @override
     def run(self, duration_sec : float):
-        
         self._apply_controls()
-        
         self.step_sim_for(duration_sec=duration_sec)
     
     def step_sim_for(self, duration_sec : float):
-
-        n_sim_steps_to_do=round(duration_sec/self._xmj_sim.physics_dt)
+        simdt = self._xmj_sim.physics_dt
+        n_sim_steps_to_do=round(duration_sec/simdt)
         for i in range(n_sim_steps_to_do):
             step_ok=self._xmj_sim.step()
             if not step_ok:
                 msg=f"Failed to step XMj simulation!"
-                ggLog.error(f"{__class__}: {msg}")
                 raise ValueError(msg)
-            self._sim_time+=self._xmj_sim.physics_dt
+            self._sim_time+=simdt
 
     def step(self) -> float:
         # always step on a _xmj_env environment dt
@@ -235,7 +238,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter
         srdf: str= None):
         reset_ok=self._xmj_sim.reset()
         super().startup(urdf=urdf, srdf=srdf)
-        rospy.loginfo("ROS time is "+str(rospy.get_time())+" pid = "+str(os.getpid()))
 
     def xmj_env(self):
         return self._xmj_sim

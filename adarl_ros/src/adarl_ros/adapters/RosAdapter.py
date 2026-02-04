@@ -13,9 +13,44 @@ import rospy
 import sensor_msgs.msg
 from adarl.adapters.BaseAdapter import BaseAdapter
 from adarl.utils.utils import JointState, LinkState, RequestFailError
-from adarl_ros_utils.msg import LinkStates
 import numpy as np
 import adarl.utils.sigint_handler
+import torch as th
+from typing_extensions import override
+
+
+def precise_sleep(delay_sec : float):
+    """Tries to sleep a bit more precisely than time.sleep(), but it is still quite bad,
+        as we cannot avoid thread switches while sleeping.
+
+    Parameters
+    ----------
+    delay_sec : float
+        Time to sleep for, in seconds
+    """
+    target = time.perf_counter_ns() + delay_sec * 1000_000_000
+    while time.perf_counter_ns() < target:
+        pass
+
+class AlteredClock():
+    def __init__(self, realtime_factor : float = 1.0):
+        self._realtime_factor = realtime_factor
+
+    def sleep(self, duration_sec : float):
+        """Sleep for the specified duration, altered by the realtime factor."""
+        duration_sec = duration_sec / self._realtime_factor
+        t0 = time.monotonic()
+        long_sleep = max(0,duration_sec-0.2)
+        if long_sleep>0:
+            time.sleep(long_sleep)
+        t = time.monotonic()
+        while t-t0 < duration_sec:
+            precise_sleep(duration_sec-(t-t0)) # can still be quite bad if a thread switch happens while we sleep
+            t = time.monotonic()
+
+    def time(self) -> float:
+        """Get the current time, altered by the realtime factor."""
+        return time.monotonic() * self._realtime_factor
 
 class RosAdapter(BaseAdapter):
     """This class allows to control the execution of a ROS-based environment.
@@ -27,7 +62,9 @@ class RosAdapter(BaseAdapter):
     def __init__(   self,   stepLength_sec : float = 0.001,
                             forced_ros_master_uri : Union[str, None] = None,
                             maxObsDelay = float("+inf"),
-                            blocking_observation = False):
+                            blocking_observation = False,
+                            walltime_factor : float = 1.0,
+                            wait_for_simtime : bool = True):
         """Initialize the Simulator controller.
 
         Raises
@@ -37,6 +74,9 @@ class RosAdapter(BaseAdapter):
 
         """
         super().__init__()
+
+        self._wait_for_simtime=wait_for_simtime
+
         self._stepLength_sec = stepLength_sec
 
         self._forced_ros_master_uri = forced_ros_master_uri
@@ -61,11 +101,14 @@ class RosAdapter(BaseAdapter):
         self._maxObsAge = maxObsDelay
         self._blocking_observation = blocking_observation
         self._mmRosLauncher : adarl_ros_utils.ros_launch_utils.MultiMasterRosLauncher = None
+        self._wall_clock = AlteredClock(realtime_factor=walltime_factor)
 
 
     def run(self, duration_sec : float):
-        rospy.sleep(duration_sec)
-
+        if self._use_sim_time:
+            rospy.sleep(duration_sec)
+        else:
+            self._wall_clock.sleep(duration_sec)
 
     def step(self) -> float:
         """Wait for the step time to pass."""
@@ -75,11 +118,9 @@ class RosAdapter(BaseAdapter):
         #TODO: it may make sense to keep track of the time spend in the rest of the processing
         sleepDuration = self._stepLength_sec - (self.getEnvTimeFromStartup() - self._last_step_end_env_time)
         # ggLog.info(f"RosAdapeter will sleep of {sleepDuration} = {self._stepLength_sec} - ({self.getEnvTimeFromStartup()} - {self._last_step_end_env_time})")
-        if sleepDuration > 0:
-            #rospy.loginfo("Sleeping "+str(sleepDuration))
-            self.run(sleepDuration)
-        else:
+        if sleepDuration <= 0:
             ggLog.warn("Too much time passed since last step call. Cannot respect step frequency, required sleepDuration = "+str(sleepDuration))
+        self.run(max(sleepDuration,0))
         t = self.getEnvTimeFromStartup()
         step_duration = t - self._last_step_end_env_time
         self._last_step_end_env_time = t
@@ -132,25 +173,32 @@ class RosAdapter(BaseAdapter):
         if self._forced_ros_master_uri is not None:
             os.environ['ROS_MASTER_URI'] = self._forced_ros_master_uri
 
-        # init_node uses use_sim_time to determine which time to use, but I can't
-        # find a reliable way for it to be set before init_node is being called
-        # So we wait for it to be set to either true or false
-        # useSimTime = None
-        # while useSimTime is None:
-        #     try:
-        #         useSimTime = rospy.get_param("/use_sim_time")
-        #     except KeyError:
-        #         ggLog.warn("Could not get /use_sim_time. Will retry")
-        #         time.sleep(1)
-        #     except ConnectionRefusedError:
-        #         ggLog.error("No connection to ROS parameter server. Will retry")
-        #         time.sleep(1)
-        # ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
+        if self._wait_for_simtime:
+            # init_node uses use_sim_time to determine which time to use, but I can't
+            # find a reliable way for it to be set before init_node is being called
+            # So we wait for it to be set to either true or false
+            useSimTime : float = None
+            while useSimTime is None:
+                try:
+                    useSimTime = rospy.get_param("/use_sim_time")
+                except KeyError:
+                    ggLog.warn("Could not get /use_sim_time. Will retry")
+                    time.sleep(1)
+                except ConnectionRefusedError:
+                    ggLog.error("No connection to ROS parameter server. Will retry")
+                    time.sleep(1)
+            ggLog.info(f"RosAdapter: use_sim_time == {useSimTime}")
+        else:
+            useSimTime = False
 
+        self._use_sim_time = useSimTime
         rospy.init_node('ros_env_controller', anonymous=True)
         adarl.utils.sigint_handler.fix_sigint_handler()
 
-        self._startup_env_time = rospy.get_time() #Will be overwritten by resetWorld
+        if self._use_sim_time:
+            self._startup_env_time = rospy.get_time()
+        else:
+            self._startup_env_time = self._wall_clock.time()
         self._last_step_end_env_time = self.getEnvTimeFromStartup() #Will be overwritten by resetWorld
 
         self._imageSubscribers = []
@@ -164,10 +212,11 @@ class RosAdapter(BaseAdapter):
             self._jointStateSubscriber = rospy.Subscriber(topic, sensor_msgs.msg.JointState, self._jointStateCallback, queue_size=1)
             ggLog.info(f"Subscribed to {topic}")
 
-        if len(self._linksToObserve)>0:
-            topic = "link_states"
-            self._linkStatesSubscriber = rospy.Subscriber(topic, LinkStates, self._linkStatesCallback, queue_size=1)
-            ggLog.info(f"Subscribed to {topic}")
+        # if len(self._linksToObserve)>0:
+        #     topic = "link_states"
+        #     from adarl_ros_utils.msg import LinkStates
+        #     self._linkStatesSubscriber = rospy.Subscriber(topic, LinkStates, self._linkStatesCallback, queue_size=1)
+        #     ggLog.info(f"Subscribed to {topic}")
 
         self._listenersStarted = True
 
@@ -338,7 +387,7 @@ class RosAdapter(BaseAdapter):
                             twist = lsMsg.twist
                             ls = LinkState( position_xyz     = (pose.position.x, pose.position.y, pose.position.z),
                                                 orientation_xyzw = (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w),
-                                                pos_velocity_xyz = (twist.linear.x, twist.linear.y, twist.linear.z),
+                                                pos_com_velocity_xyz = (twist.linear.x, twist.linear.y, twist.linear.z),
                                                 ang_velocity_xyz = (twist.angular.x, twist.angular.y, twist.angular.z))
                             vs = [ls.pose.position, ls.pose.orientation, ls.pos_velocity_xyz, ls.ang_velocity_xyz]
                             if np.any([np.any(np.isnan(v)) for v in vs]) or not np.all([np.all(np.isfinite(v)) for v in vs]):
@@ -384,9 +433,16 @@ class RosAdapter(BaseAdapter):
         if rospy.is_shutdown():
             raise RuntimeError("ROS has been shut down. Will not reset.")
 
+    @override
+    def initialize_for_episode(self):
+        super().initialize_for_episode()
+        self._last_step_end_env_time = self.getEnvTimeFromStartup()
 
     def getEnvTimeFromStartup(self) -> float:
-        t = rospy.get_time() - self._startup_env_time
+        if self._use_sim_time:
+            t = rospy.get_time() - self._startup_env_time
+        else:
+            t = self._wall_clock.time() - self._startup_env_time
         return t
 
 
@@ -394,7 +450,8 @@ class RosAdapter(BaseAdapter):
     def build_scenario(self, launch_file_pkg_and_path : Union[str,Tuple[str,str]],
                              launch_file_args : Dict[str,str],
                              base_port = 11350,
-                             ros_master_ip = "127.0.0.1"):
+                             ros_master_ip = "127.0.0.1",
+                             **kwargs):
         if isinstance(launch_file_pkg_and_path, (tuple, list)):
             launch_file = rospkg.RosPack().get_path(launch_file_pkg_and_path[0])+"/"+launch_file_pkg_and_path[1]
         else:
@@ -410,3 +467,7 @@ class RosAdapter(BaseAdapter):
         if self._mmRosLauncher is not None:
             self._mmRosLauncher.stop()
         rospy.signal_shutdown(reason="RosAdapter.destroy()")
+
+    def get_joints_state_step_stats(self) -> th.Tensor:
+        raise NotImplementedError()
+    
