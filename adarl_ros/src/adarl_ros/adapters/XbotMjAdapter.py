@@ -346,7 +346,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
     
     @override
     def apply_joint_ref_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
-                                ramp_time = None):
+                                ramp_time = None, tolerance = -1.0):
         """
         Linearly ramp joint position references from current
         values to targets over the configured ramp time.
@@ -379,12 +379,12 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
             commanded_joint_impedances_by_jid[jid] = jcmd
 
         # prepare current refs and target arrays
-        curr_pos_ref = self._robot_interface.getPositionReference()
+        curr_pos_ref = list(self._robot_interface.getPositionReference())
         curr_stiffness = list(self._robot_interface.getStiffness())
         curr_damping = list(self._robot_interface.getDamping())
         
         # prepare target arrays (default to current to avoid NaNs)
-        target_pos = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
+        target_pos_ref = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
 
         used_fallback = False
         for jid in range(self._joints_num):
@@ -402,12 +402,23 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
             # set immediate refs (we continue to re-send these each loop)
             self._prefs[jid] = pref
 
-            target_pos[jid] = self._prefs[jid]
+            target_pos_ref[jid] = self._prefs[jid]
 
         if used_fallback:
             ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
             ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
 
+        all_within_tolerance = True
+        for j in range(self._joints_num):
+            out_of_tolerance=(abs(target_pos_ref[j]-curr_pos_ref[j])) > tolerance
+            if out_of_tolerance:
+                all_within_tolerance = False
+
+        if all_within_tolerance:
+            ggLog.info(f"All position references are already within tolerance {tolerance}, no ramp needed.")
+            return 
+        
+        
         interp_p = [0.0] * self._joints_num
 
         start_time=self.getEnvTimeFromStartup()
@@ -423,7 +434,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
             # compute interpolated gains
             for j in range(self._joints_num):
-                interp_p[j] = curr_pos_ref[j] + frac * (target_pos[j] - curr_pos_ref[j])
+                interp_p[j] = curr_pos_ref[j] + frac * (target_pos_ref[j] - curr_pos_ref[j])
 
                 # update stored so other code sees intermediate values
                 self._prefs[j] = interp_p[j]
@@ -436,9 +447,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
             self._robot_interface.setDamping(curr_damping)     # keep current damping
 
             self._robot_interface.move()
-            
-            self.step_sim_for(duration_sec=self._position_ramp_tinysleep)
 
+            self.step_sim_for(duration_sec=self._impedance_ramp_tinysleep) # we need to step the sim (not necessary on real robot)
+            
             # finish condition
             if frac >= 1.0:
                 break
@@ -490,6 +501,31 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         target_stiffness = [float(curr_stiffness[j]) for j in range(self._joints_num)]
         target_damping   = [float(curr_damping[j])   for j in range(self._joints_num)]
 
+        # write targets
+        used_fallback = False
+        for jid in range(self._joints_num):
+            cmd = commanded_joint_impedances_by_jid.get(jid, None)
+            if cmd is None and self._allow_fallback:
+                used_fallback = True
+                ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
+                cmd = (curr_pos_ref[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
+            elif cmd is None:
+                raise RuntimeError(f"No impedance command provided for joint {jid} and fallback is not allowed.")
+
+            # cmd expected: (pos_ref, vel_ref, effort_ref, stiffness, damping)
+            _, _, _, stiff, damp = cmd
+
+            # set immediate refs (we continue to re-send these each loop)
+            self._pgains[jid] = stiff
+            self._vgains[jid] = damp
+
+            target_stiffness[jid] = self._pgains[jid]
+            target_damping[jid] = self._vgains[jid]
+
+        if used_fallback:
+            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
+            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
+
         # Linear ramp: compute from initial to target over ramp_time
         initial_p = [float(x) for x in curr_stiffness]
         initial_v = [float(x) for x in curr_damping]
@@ -523,6 +559,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
             self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
 
             self._robot_interface.move()
+
             self.step_sim_for(duration_sec=self._impedance_ramp_tinysleep) # we need to step the sim (not necessary on real robot)
 
             # finish condition
