@@ -447,6 +447,17 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         status = None
         self._switch_control(switch_on=False) # deactivate ros control to
         # avoid race conditions on the joints
+        switch_resp = homing_ros_switch(True) # trigger homing
+        time.sleep(0.1)
+        resp = homing_ros_state()
+        status = resp.status
+        homing_running = resp.status == "Running"
+        if not homing_running:
+            ggLog.info(f"homing could not be started with response: {switch_resp}")
+            return
+        else:
+            ggLog.info(f"homing started with response: {switch_resp}")
+            
         while homing_running:
             if time.monotonic()-t0>timeout_s:
                 raise TimeoutError(f"Timed out waiting for homing to be completed switch. Status = '{status}'")
@@ -458,18 +469,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 raise e
             status = resp.status
             homing_running = resp.status == "Running"
-            # ggLog.info(f"ros_control state: {resp}")
-            if not homing_running:
-                try:
-                    resp = homing_ros_switch(True) # DOES NOT WORK IF THE SIMULATION IS PAUSED. A sadly, services have no timeouts (https://github.com/ros/ros_comm/pull/2144)
-                except rospy.ServiceException as e:
-                    ggLog.info(f"homing_ros_switch call failed: {e}")
-                    raise e
-                # ggLog.info(f"ros_ctrl_switch service responded {resp}")        
             time.sleep(0.5)
+
         ggLog.info(f"homing performed with response: {resp}")
+
         self._switch_control(switch_on=True) # we can reactivate ros control
-        time.sleep(2.0)
+        # time.sleep(2.0)
 
     def is_ros_control_running(self):
         return self._is_xbot_task_running("ros_control")
