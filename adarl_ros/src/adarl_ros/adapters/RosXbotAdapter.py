@@ -1055,7 +1055,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         # prepare current refs and target arrays
         curr_pos_ref = self._robot_interface.getPositionReference()
-
+        curr_stiffness = list(self._robot_interface.getStiffness())
+        curr_damping = list(self._robot_interface.getDamping())
+        
         # prepare target arrays (default to current to avoid NaNs)
         target_pos = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
 
@@ -1103,6 +1105,11 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
             # send to robot
             self._robot_interface.setPositionReference(self._prefs)
+            self._robot_interface.setVelocityReference([0.0]*self._joints_num) # zero vel ref
+            self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
+            self._robot_interface.setStiffness(curr_stiffness) # keep current stiffness
+            self._robot_interface.setDamping(curr_damping)     # keep current damping
+
             self._robot_interface.move()
             
             # finish condition
@@ -1150,6 +1157,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         # prepare current refs and target arrays
         curr_stiffness = list(self._robot_interface.getStiffness())
         curr_damping = list(self._robot_interface.getDamping())
+        curr_pos_ref = self._robot_interface.getPositionReference() # needed to set p ref 
 
         # prepare target arrays (default to current to avoid NaNs)
         target_stiffness = [float(curr_stiffness[j]) for j in range(self._joints_num)]
@@ -1183,6 +1191,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             # send to robot
             self._robot_interface.setStiffness(interp_p)
             self._robot_interface.setDamping(interp_v)
+            self._robot_interface.setPositionReference(curr_pos_ref) # needed to set p ref 
+            self._robot_interface.setVelocityReference([0.0]*self._joints_num) # zero vel ref
+            self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
 
             self._robot_interface.move()
 
@@ -1191,6 +1202,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 break
 
         # final enforce exact target values (sets exact targets if ramp completed;
-        self.apply_joint_impedances(joint_impedances_pvesd)
+        self._robot_interface.setStiffness(target_stiffness)
+        self._robot_interface.setDamping(target_damping)
 
         ggLog.info(f"Linear impedance ramp finished after {elapsed:.3f}s.")

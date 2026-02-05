@@ -59,7 +59,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         self._clock_pub = None
         rospy.set_param('/use_sim_time', False) # initially 
         # set to false, otherwise RobotInterface from xbot will halt waiting for /clock
-
+        
         self._render_to_file=render_to_file
         self._render_fps=render_fps
         self._model_fpath=model_fpath
@@ -380,7 +380,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
         # prepare current refs and target arrays
         curr_pos_ref = self._robot_interface.getPositionReference()
-
+        curr_stiffness = list(self._robot_interface.getStiffness())
+        curr_damping = list(self._robot_interface.getDamping())
+        
         # prepare target arrays (default to current to avoid NaNs)
         target_pos = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
 
@@ -428,6 +430,11 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
 
             # send to robot
             self._robot_interface.setPositionReference(self._prefs)
+            self._robot_interface.setVelocityReference([0.0]*self._joints_num) # zero vel ref
+            self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
+            self._robot_interface.setStiffness(curr_stiffness) # keep current stiffness
+            self._robot_interface.setDamping(curr_damping)     # keep current damping
+
             self._robot_interface.move()
             
             self.step_sim_for(duration_sec=self._position_ramp_tinysleep)
@@ -477,6 +484,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         # prepare current refs and target arrays
         curr_stiffness = list(self._robot_interface.getStiffness())
         curr_damping = list(self._robot_interface.getDamping())
+        curr_pos_ref = self._robot_interface.getPositionReference() # needed to set p ref 
 
         # prepare target arrays (default to current to avoid NaNs)
         target_stiffness = [float(curr_stiffness[j]) for j in range(self._joints_num)]
@@ -510,6 +518,9 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
             # send to robot
             self._robot_interface.setStiffness(interp_p)
             self._robot_interface.setDamping(interp_v)
+            self._robot_interface.setPositionReference(curr_pos_ref) # needed to set p ref 
+            self._robot_interface.setVelocityReference([0.0]*self._joints_num) # zero vel ref
+            self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
 
             self._robot_interface.move()
             self.step_sim_for(duration_sec=self._impedance_ramp_tinysleep) # we need to step the sim (not necessary on real robot)
@@ -519,6 +530,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
                 break
 
         # final enforce exact target values (sets exact targets if ramp completed;
-        self.apply_joint_impedances(joint_impedances_pvesd)
+        self._robot_interface.setStiffness(target_stiffness)
+        self._robot_interface.setDamping(target_damping)
 
         ggLog.info(f"Linear impedance ramp finished after {elapsed:.3f}s.")
