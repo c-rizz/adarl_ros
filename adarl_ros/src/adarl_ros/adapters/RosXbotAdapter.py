@@ -317,11 +317,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     #     self._imu_linacc_last[:, 1]=lin_acc.y
     #     self._imu_linacc_last[:, 2]=lin_acc.z
 
-    @override
-    def set_monitored_joints(self, jointsToObserve: List[Tuple[str, str]]):
-        self._xbot_joints_to_monitor = jointsToObserve # keep empty the normal jointsToObserve and use this instead
-        super().set_monitored_joints(jointsToObserve)
-    
     def fallback_striffness(self):
         return self._fallback_cmd_stiffness
     
@@ -413,8 +408,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._base_linacc_last=np.zeros((1, 3))
 
         ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
-
-        self._jimpedance_controlled_joints_jids = np.array([self._xbotjname_to_jid[jn] for model_name,jn in self._jimpedance_controlled_joints])
         
         # preallocating cmds
         self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
@@ -494,8 +487,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     @override
     def set_impedance_controlled_joints(self, joint_names : Sequence[Tuple[str,str]]):
+        
         self._jimpedance_controlled_joints = list(joint_names)
 
+        # also build mapping tensor for converting from xbot joint order to the adapter's
+        self._jimpedance_xbot_to_jids = th.tensor([self._xbotjname_to_jid[jn] for _, jn in self._jimpedance_controlled_joints])
+            
     @override
     def get_impedance_controlled_joints(self) -> list[tuple[str,str]]:
         return self._jimpedance_controlled_joints
@@ -595,6 +592,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     @override
     def setJointsImpedanceCommand(self, joint_impedances_pvesd : Mapping[Tuple[str,str],Tuple[float,float,float,float,float]] | th.Tensor,
                                         delay_sec : float = 0) -> None:
+                
         if delay_sec!=0.0:
             raise NotImplementedError("Impedance command delay is not supported")
         
@@ -603,7 +601,6 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         elif isinstance(joint_impedances_pvesd, Mapping):
             joint_impedances_pvesd_dict = joint_impedances_pvesd
 
-        
         # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
         jdi = self.get_joint_device_info(after_env_time=float("-inf"))
         # if jdi is not None and jdi.mask == 0:
@@ -921,7 +918,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def is_safety_triggered(self):
         raise NotImplementedError()
     
-    def _get_current_refs_pvesd(self):
+    def _get_current_refs_pvesd_xbot(self):
         self._robot_interface.sense(update_references=True)
         return np.stack([   self._robot_interface.getPositionReference(),
                             self._robot_interface.getVelocityReference(),
@@ -931,9 +928,10 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
     @override
     def get_current_joint_impedance_command(self) -> th.Tensor:
-        ref_j_pvesd = self._get_current_refs_pvesd()
-        # pvesd_by_name = {(mn,jn):ref_j_pvesd[self._xbotjname_to_jid[jn]] for mn,jn in self._jimpedance_controlled_joints}
-        return th.as_tensor(ref_j_pvesd[self._jimpedance_controlled_joints_jids], device=self._torch_device, dtype=th.float32)
+
+        ref_j_pvesd = self._get_current_refs_pvesd_xbot() # in xbot order
+
+        return th.as_tensor(ref_j_pvesd[self._jimpedance_xbot_to_jids, :], device=self._torch_device, dtype=th.float32)
     
     @override
     def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
@@ -1025,82 +1023,40 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         
 
     @override
-    def apply_joint_ref_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
+    def apply_joint_ref_with_ramp(self, joint_impedances_pvesd : th.Tensor,
                                 ramp_time = None, tolerance = -1.0):
+        
+        
         """
         Linearly ramp joint position references from current
         values to targets over the configured ramp time.
+
+        We assume joint_impedances_pvesd to be in the same order as set by the 
+        set_impedance_controlled_joints
+
         """
-        # quick return for empty input
-        if len(joint_impedances_pvesd) == 0:
-            return
+
+        if not isinstance(joint_impedances_pvesd, th.Tensor):
+            raise TypeError("joint_impedances_pvesd must be a torch.Tensor")
 
         if ramp_time is None:
             ramp_time=self.position_ramp_time
 
-        # convert tensor or mapping to dict keyed by (model_name,jname)
-        if isinstance(joint_impedances_pvesd, th.Tensor):
-            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
-        elif isinstance(joint_impedances_pvesd, Mapping):
-            joint_impedances_pvesd_dict = joint_impedances_pvesd
-        else:
-            raise TypeError("joint_impedances_pvesd must be a Mapping or a torch.Tensor")
-
-        # map commanded values to joint ids
-        commanded_joint_impedances_by_jid = {}
-        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
-            model_name, jname = full_jname
-            if model_name != self._model_name:
-                raise RuntimeError(
-                    f"Commanded joint impedance for model different from the controlled one "
-                    f"(asked '{model_name, jname}', but have '{self._model_name}')"
-                )
-            jid = self._xbotjname_to_jid[jname]
-            commanded_joint_impedances_by_jid[jid] = jcmd
-
         # prepare current refs and target arrays
-        curr_pos_ref = list(self._robot_interface.getPositionReference())
-        curr_stiffness = list(self._robot_interface.getStiffness())
-        curr_damping = list(self._robot_interface.getDamping())
+        curr_pvesd = self.get_current_joint_impedance_command() # pvesd in adapter order
+        curr_pvesd[:, 1] = 0.0 # zero velocity refs 
+        curr_pvesd[:, 2] = 0.0 # zero effort refs 
+
+        target_pos_ref = joint_impedances_pvesd[:, 0].clone()
+        start_pos_ref = curr_pvesd[:, 0].clone()
+
+        if tolerance >= 0.0:
+            out_of_tolerance= th.abs(target_pos_ref-curr_pvesd[:, 0])  > tolerance
+            all_within_tolerance = not out_of_tolerance.any().item()
+            if all_within_tolerance:
+                ggLog.info(f"All position references are already within tolerance {tolerance}, no ramp needed.")
+                return 
         
-        # prepare target arrays (default to current to avoid NaNs)
-        target_pos_ref = [float(curr_pos_ref[j]) for j in range(self._joints_num)]
-
-        used_fallback = False
-        for jid in range(self._joints_num):
-            cmd = commanded_joint_impedances_by_jid.get(jid, None)
-            if cmd is None and self._allow_fallback:
-                used_fallback = True
-                ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
-                cmd = (curr_pos_ref[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
-            elif cmd is None:
-                raise RuntimeError(f"No impedance command provided for joint {jid} and fallback is not allowed.")
-
-            # cmd expected: (pos_ref, vel_ref, effort_ref, stiffness, damping)
-            pref, _, _, _, _ = cmd
-
-            # set immediate refs (we continue to re-send these each loop)
-            self._prefs[jid] = pref
-
-            target_pos_ref[jid] = self._prefs[jid]
-
-        if used_fallback:
-            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
-            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
-
-        all_within_tolerance = True
-        for j in range(self._joints_num):
-            out_of_tolerance=(abs(target_pos_ref[j]-curr_pos_ref[j])) > tolerance
-            if out_of_tolerance:
-                all_within_tolerance = False
-
-        if all_within_tolerance:
-            ggLog.info(f"All position references are already within tolerance {tolerance}, no ramp needed.")
-            return 
-        
-        
-        interp_p = [0.0] * self._joints_num
-
         start_time=self.getEnvTimeFromStartup()
         elapsed=0.0
 
@@ -1112,138 +1068,78 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             elapsed = now - start_time
             frac = min(1.0, max(0.0, elapsed / ramp_time))
 
-            # compute interpolated gains
-            for j in range(self._joints_num):
-                interp_p[j] = curr_pos_ref[j] + frac * (target_pos_ref[j] - curr_pos_ref[j])
-
-                # update stored so other code sees intermediate values
-                self._prefs[j] = interp_p[j]
-
-            # send to robot
-            self._robot_interface.setPositionReference(self._prefs)
-            self._robot_interface.setVelocityReference([0.0]*self._joints_num) # zero vel ref
-            self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
-            self._robot_interface.setStiffness(curr_stiffness) # keep current stiffness
-            self._robot_interface.setDamping(curr_damping)     # keep current damping
-
-            self._robot_interface.move()
-            
+            # compute interpolated position from fixed start to target
+            curr_pvesd[:, 0] = start_pos_ref + frac * (target_pos_ref - start_pos_ref)
+            self.setJointsImpedanceCommand(curr_pvesd) # set the target refs (we will ramp towards these)
+            self.run(self._position_ramp_tinysleep) # apply commands and run 
+                    
             # finish condition
             if frac >= 1.0:
                 break
 
         ggLog.info(f"Linear position ramp finished after {elapsed:.3f}s.")
-        # final enforce exact target values (sets exact targets if ramp completed;
-        # self.apply_joint_impedances(joint_impedances_pvesd)
+        # curr_pvesd[:, 0] = target_pos_ref # ensure we end exactly at the target position refs (in case of time inaccuracies in the ramp)
+        # self.apply_joint_impedances(curr_pvesd)
     
     @override
-    def apply_joint_impedances_with_ramp(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor],
-                                ramp_time = None):
+    def apply_joint_impedances_with_ramp(self, joint_impedances_pvesd : th.Tensor,
+                                ramp_time = None, tolerance = -1.0):
         """
         Linearly ramp stiffness (p gains) and damping (v gains) from current
         values to targets over the configured ramp time.
+
+        We assume joint_impedances_pvesd to be in the same order as set by the 
+        set_impedance_controlled_joints
+
         """
-        # quick return for empty input
-        if len(joint_impedances_pvesd) == 0:
-            return
+
+        if not isinstance(joint_impedances_pvesd, th.Tensor):
+            raise TypeError("joint_impedances_pvesd must be a torch.Tensor")
 
         if ramp_time is None:
             ramp_time=self.impedance_ramp_time
 
-        # convert tensor or mapping to dict keyed by (model_name,jname)
-        if isinstance(joint_impedances_pvesd, th.Tensor):
-            joint_impedances_pvesd_dict = dict(zip(self._jimpedance_controlled_joints, joint_impedances_pvesd))
-        elif isinstance(joint_impedances_pvesd, Mapping):
-            joint_impedances_pvesd_dict = joint_impedances_pvesd
-        else:
-            raise TypeError("joint_impedances_pvesd must be a Mapping or a torch.Tensor")
-
-        # map commanded values to joint ids
-        commanded_joint_impedances_by_jid = {}
-        for full_jname, jcmd in joint_impedances_pvesd_dict.items():
-            model_name, jname = full_jname
-            if model_name != self._model_name:
-                raise RuntimeError(
-                    f"Commanded joint impedance for model different from the controlled one "
-                    f"(asked '{model_name, jname}', but have '{self._model_name}')"
-                )
-            jid = self._xbotjname_to_jid[jname]
-            commanded_joint_impedances_by_jid[jid] = jcmd
-
         # prepare current refs and target arrays
-        curr_stiffness = list(self._robot_interface.getStiffness())
-        curr_damping = list(self._robot_interface.getDamping())
-        curr_pos_ref = self._robot_interface.getPositionReference() # needed to set p ref 
+        curr_pvesd = self.get_current_joint_impedance_command() # pvesd in adapter order
+        curr_pvesd[:, 1] = 0.0 # zero velocity refs 
+        curr_pvesd[:, 2] = 0.0 # zero effort refs 
 
-        # prepare target arrays (default to current to avoid NaNs)
-        target_stiffness = [float(curr_stiffness[j]) for j in range(self._joints_num)]
-        target_damping   = [float(curr_damping[j])   for j in range(self._joints_num)]
+        target_stiffness= joint_impedances_pvesd[:, 3].clone()
+        start_stiffness = curr_pvesd[:, 3].clone()
+        target_damping= joint_impedances_pvesd[:, 4].clone()
+        start_damping = curr_pvesd[:, 4].clone()
 
-        # write targets
-        used_fallback = False
-        for jid in range(self._joints_num):
-            cmd = commanded_joint_impedances_by_jid.get(jid, None)
-            if cmd is None and self._allow_fallback:
-                used_fallback = True
-                ggLog.warn(f"Missing command for joint {self._jid_to_xbotjname[jid]} ({jid}), using fallback.")
-                cmd = (curr_pos_ref[jid], 0, 0, self._fallback_cmd_stiffness, self._fallback_cmd_damping)
-            elif cmd is None:
-                raise RuntimeError(f"No impedance command provided for joint {jid} and fallback is not allowed.")
-
-            # cmd expected: (pos_ref, vel_ref, effort_ref, stiffness, damping)
-            _, _, _, stiff, damp = cmd
-
-            # set immediate refs (we continue to re-send these each loop)
-            self._pgains[jid] = stiff
-            self._vgains[jid] = damp
-
-            target_stiffness[jid] = self._pgains[jid]
-            target_damping[jid] = self._vgains[jid]
-
-        if used_fallback:
-            ggLog.warn(f"Used fallback because only had commands for joints_ids:\n {list(commanded_joint_impedances_by_jid.keys())}")
-            ggLog.warn(f"Which correspond to joint names:\n {[jn for jn,ji in joint_impedances_pvesd_dict.items()]}")
-
-        # Linear ramp: compute from initial to target over ramp_time
-        initial_p = [float(x) for x in curr_stiffness]
-        initial_v = [float(x) for x in curr_damping]
-
+        if tolerance >= 0.0:
+            out_of_tolerance_stiff = th.abs(target_stiffness-curr_pvesd[:, 3])  > tolerance
+            out_of_tolerance_damp = th.abs(target_damping-curr_pvesd[:, 4])  > tolerance
+            all_within_tolerance = not (out_of_tolerance_stiff | out_of_tolerance_damp).any().item()
+            if all_within_tolerance:
+                ggLog.info(f"All stiffness and damping references are already within tolerance {tolerance}, no ramp needed.")
+                return 
+            
         start_time=self.getEnvTimeFromStartup()
         elapsed=0.0
 
         ggLog.info(f"Starting linear impedance ramp for {ramp_time:.3f}s (sleep {self._impedance_ramp_tinysleep:.4f}s)...")
 
         while True:
+            
             now = self.getEnvTimeFromStartup()
             elapsed = now - start_time
             frac = min(1.0, max(0.0, elapsed / ramp_time))
-
-            # compute interpolated gains
-            interp_p = [0.0] * self._joints_num
-            interp_v = [0.0] * self._joints_num
-            for j in range(self._joints_num):
-                interp_p[j] = initial_p[j] + frac * (target_stiffness[j] - initial_p[j])
-                interp_v[j] = initial_v[j] + frac * (target_damping[j] - initial_v[j])
-
-                # update stored so other code sees intermediate values
-                self._pgains[j] = interp_p[j]
-                self._vgains[j] = interp_v[j]
-
-            # send to robot
-            self._robot_interface.setStiffness(interp_p)
-            self._robot_interface.setDamping(interp_v)
-            self._robot_interface.setPositionReference(curr_pos_ref) # needed to set p ref 
-            self._robot_interface.setVelocityReference([0.0]*self._joints_num) # zero vel ref
-            self._robot_interface.setEffortReference([0.0]*self._joints_num) # zero effort ref
-
-            self._robot_interface.move()
-
+            # compute interpolated position from fixed start to target
+            curr_pvesd[:, 3] = start_stiffness + frac * (target_stiffness - start_stiffness)
+            curr_pvesd[:, 4] = start_damping + frac * (target_damping - start_damping)
+            self.setJointsImpedanceCommand(curr_pvesd) # set the target refs (we will ramp towards these)
+            self.run(self._impedance_ramp_tinysleep) # apply commands and run 
+                    
             # finish condition
             if frac >= 1.0:
                 break
 
         # final enforce exact target values (sets exact targets if ramp completed;
-        self._robot_interface.setStiffness(target_stiffness)
-        self._robot_interface.setDamping(target_damping)
+        # curr_pvesd[:, 3] = target_stiffness
+        # curr_pvesd[:, 4] = target_damping
+        # self.apply_joint_impedances(curr_pvesd)
 
         ggLog.info(f"Linear impedance ramp finished after {elapsed:.3f}s.")
