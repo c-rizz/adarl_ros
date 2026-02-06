@@ -423,7 +423,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         task_id=self._xbot_task_info_map[task_name]
         return self._xbot_task_stats[task_id].state=="Running"
 
-    def trigger_homing(self):
+    def trigger_xbot_homing(self):
         homing_switch_srv_name = "/xbotcore/homing/switch"
         homing_state_srv_name = "/xbotcore/homing/state"
         timeout_s= float("+inf")
