@@ -1,43 +1,40 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import os
-import time
-from threading import Lock
 from typing import Dict, List, Tuple, Union, Optional, Sequence, Mapping
+from typing_extensions import override
+
+import time
+
+from threading import RLock, Condition
+
+import numpy as np
+
+import torch as th
+
+from transforms3d.quaternions import mat2quat
 
 import adarl.utils.beep
 import adarl.utils.dbg.ggLog as ggLog
 import adarl.utils.utils
-import rospkg
+from adarl_ros.adapters.RosAdapter import RosAdapter
+from adarl.utils.utils import JointState, LinkState, build_1D_vramp_trajectory, MoveFailError
+from adarl.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
+from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
+# from adarl.adapters.BaseAdapter import JointName,  LinkName
+import adarl.utils.session
+
 import rospy
 import std_srvs.srv
-from adarl_ros.adapters.RosAdapter import RosAdapter
-from adarl.utils.utils import JointState, LinkState, RequestFailError, build_1D_vramp_trajectory, MoveFailError
-import numpy as np
+from std_srvs.srv import SetBool
 
 from xbot_interface import config_options as opt
 from xbot_interface import xbot_interface as xbot
-from urdf_parser_py.urdf import URDF
-
-from std_srvs.srv import SetBool
-from xbot_msgs.srv import PluginStatus, SetControlMask, GetStringList, GetParameterInfo, GetParameterInfoRequest
+from xbot_msgs.srv import PluginStatus, SetControlMask, GetStringList
+# , GetParameterInfo, GetParameterInfoRequest
 from xbot_msgs.msg import JointDeviceInfo, Statistics2
-from sensor_msgs.msg import Imu
-
-import torch as th
-from adarl.adapters.BaseJointImpedanceAdapter import BaseJointImpedanceAdapter
-from typing_extensions import override
 from cartesian_interface.affine3 import Affine3 # needed by xbot_interface as it doesn't import it correctly
-import traceback
-from threading import RLock, Condition
-import threading
-from adarl.adapters.BaseJointPositionAdapter import BaseJointPositionAdapter
-from adarl.adapters.BaseAdapter import JointName,  LinkName
-import adarl.utils.session
 
-from transforms3d.quaternions import mat2quat
-
-import math
+from urdf_parser_py.urdf import URDF
 
 # ------------------------------------------------------------------------------------------
 # XBOT helper functions
@@ -74,8 +71,6 @@ def build_xbot_cfg(is_floating_base,
                 raise TimeoutError()
             time.sleep(retry_freq)
             ggLog.warn(f"build_xbot_cfg: could not get robot semantic description parameter at \"{semantic_description_name}\"! Trying again...")
-
-    # type: ignore
 
     if not isinstance(urdf, str):
         raise RuntimeError(f"URDF is not a string, it's a {type(urdf)}")
@@ -181,6 +176,7 @@ def set_filters(set_enabled : bool, profile_name = "safe"):
             resp = enable_filter_srv(set_enabled)
             if not resp.success:
                 raise RuntimeError(f"Failed to set filters status: {resp}")
+            
     ggLog.info(f"Filters {'enabled' if filter_status else 'disabled'}. Cutoff = {filter_hz}")
 
 def wait_for_ros_service(server_name: str, timeout=1.0):
@@ -208,6 +204,7 @@ def detect_simulated():
     hw_type=res.response[0]
     
     return hw_type=="sim"
+
 class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAdapter):
 
     def __init__(self,  model_name : str,
@@ -384,11 +381,14 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         super().startup()
     
-        self.run_async(duration_sec=self._asynch_run_duration) # run sim for a while to let xbot start up properly (and avoid timeouts on service calls)
+        self.run_async(duration_sec=self._asynch_run_duration) # run sim for a while to let xbot start up properly
+        # (and avoid timeouts on service calls)
         
         self._startup_xbot(urdf=urdf, srdf=srdf)
 
         self.stop_run_async()
+
+        ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
 
         # imu_topic_name = "/xbotcore/imu/"+self._imu_link
         # self._imu_frame="none"
@@ -401,14 +401,12 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._xbot_imu = self._robot_interface.getImu()[self._imu_link] # we assume there's only one imu
         self._R_imu_link=self._robot_interface.model().getPose(self._base_link, self._imu_link).matrix()[:3,:3] # we assume a static tranform
 
-        # base link state (defaults to imu_link), updated when imu callback is called
+        # base link state (defaults to imu_link), updated when imu data getter is called
         self._base_q_last=np.zeros((1, 4))
         self._base_q_last[:, 0]=1.0
         self._base_omega_last=np.zeros((1, 3))
         self._base_linacc_last=np.zeros((1, 3))
-
-        ggLog.info(f"RosXbotAdapter found joints: {list(self._xbotjname_to_jid.keys())}")
-        
+            
         # preallocating cmds
         self._prefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
         self._vrefs =np.zeros(shape=(self._joints_num,), dtype=np.float64)
@@ -602,7 +600,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
             joint_impedances_pvesd_dict = joint_impedances_pvesd
 
         # ggLog.info(f"Setting impedances: {joint_impedances_pvesd}")
-        jdi = self.get_joint_device_info(after_env_time=float("-inf"))
+        # jdi = self.get_joint_device_info(after_env_time=float("-inf"))
         # if jdi is not None and jdi.mask == 0:
         #     ggLog.warn(f"Commanding impedance, but joint device mask is {jdi.mask}.")
         for full_jname, jcmd in joint_impedances_pvesd_dict.items():
@@ -611,13 +609,13 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 raise RuntimeError(f"Commanded joint impedance for model different from the controlled one (asked '{model_name, jname}', but have '{self._model_name}')")
             self._commanded_joint_impedances_by_name[full_jname] = jcmd
 
-    def _apply_commanded_joint_impedances(self):
+    def apply_commanded_joint_impedances(self):
         self.apply_joint_impedances(self._commanded_joint_impedances_by_name)
         # self.apply_joint_impedances_with_ramp(self._commanded_joint_impedances_by_name) # ramp to avoid dangerous torque discontinuities
 
     @override
     def apply_joint_impedances(self, joint_impedances_pvesd : Dict[Tuple[str,str],Tuple[float,float,float,float,float] | th.Tensor]):
-        # ggLog.info(f"applying joint impedances {joint_impedances_pvesd}")
+
         if len (joint_impedances_pvesd)==0:
             return
         
@@ -697,10 +695,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def _apply_controls(self):
         self._apply_commanded_joint_trajectories() # trajectories override positions by setting position commands
         self._apply_commanded_joint_positions() # positions override impedances by setting impedance commands
-        self._apply_commanded_joint_impedances() 
-
-    def apply_cmds_now(self):
-        self._apply_controls()
+        self.apply_commanded_joint_impedances() 
 
     @override
     def run(self, duration_sec: float):

@@ -445,8 +445,6 @@ class RosAdapter(BaseAdapter):
             t = self._wall_clock.time() - self._startup_env_time
         return t
 
-
-
     def build_scenario(self, launch_file_pkg_and_path : Union[str,Tuple[str,str]],
                              launch_file_args : Dict[str,str],
                              base_port = 11350,

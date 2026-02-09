@@ -187,6 +187,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
     def delete_model(self, model_name : str):
         raise NotImplementedError()
     
+    @override
     def getEnvTimeFromStartup(self) -> float:
         # time elapsed since startup/reset of the simulator
         return self._sim_time
@@ -194,12 +195,6 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
     def getEnvTimeFromReset(self) -> float:
         return self._sim_time
     
-    def set_monitored_links(self, linksToObserve : List[Tuple[str,str]]):
-        super().set_monitored_links(linksToObserve=linksToObserve)
-    
-    def set_monitored_cameras(self, camerasToRender : List[str] = []):
-        super().set_monitored_cameras(camerasToRender=camerasToRender)
-
     @override
     def run(self, duration_sec : float):
         self._apply_controls()
@@ -218,7 +213,8 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
                 msg = Clock()
                 msg.clock = rospy.Time.from_sec(self._sim_time)
                 self._clock_pub.publish(msg)
-
+    
+    @override
     def step(self) -> float:
         # always step on a _xmj_env environment dt
         stime_before=self._sim_time
@@ -226,6 +222,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         # self.clear_commands()
         return self._sim_time-stime_before
     
+    @override
     def startup(self, 
         urdf: str = None, 
         srdf: str= None):
@@ -245,11 +242,13 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
     def xmj_env(self):
         return self._xmj_sim
     
+    @override
     def resetWorld(self):
         reset_ok=self._xmj_sim.reset()
         super().resetWorld()
         self._sim_time=0
 
+    @override
     def _setup_joint_control(self, control_mask : int, timeout_s = 300.0) -> int:
         mask = -1
         def check_done():
@@ -270,6 +269,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         # check_done()
         return mask
     
+    @override
     def _switch_control(self, switch_on: bool, timeout_s = 300.0) -> bool:
         # The switch service works only if the simulation is running
         switched_on = not switch_on
@@ -286,24 +286,12 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         # check_done()
         return switched_on
 
-    @override
-    def getJointsState(self, 
-            requestedJoints : List[Tuple[str,str]] | None = None) -> Dict[Tuple[str,str],JointState] | th.Tensor:
-        
-        ret=super().getJointsState(requestedJoints=requestedJoints)
-
-        return ret
-
     def getLinksState(self, requestedLinks : List[Tuple[str,str]]) -> Dict[Tuple[str,str],LinkState]:
-        self._xmj_sim.p
-        self._xmj_sim.q
-        self._xmj_sim.twist
-        self._xmj_sim.jnts_q
 
         ret = {}
         for rl in requestedLinks:
-            if not (("base_link" in rl) or ("root_link" in rl)):
-                ggLog.info(f"getLinksState currently supports reading base link state only!")
+            if not (self._base_link in rl):
+                ggLog.info(f"getLinksState currently supports reading base link ({self._base_link}) state only!")
             else:
                 linkState = LinkState(position_xyz = (self._xmj_sim.p[0], self._xmj_sim.p[1], self._xmj_sim.p[2]),
                     orientation_xyzw = (self._xmj_sim.q[1], self._xmj_sim.q[2], self._xmj_sim.q[3], self._xmj_sim.q[0]),
@@ -323,13 +311,7 @@ class XbotMjAdapter(RosXbotAdapter, BaseSimulationAdapter):
         jointStates : Dict[Tuple[str,str],JointState]
             Keys are in the format (model_name, joint_name), the value is the joint state to enforce
         """
-        controlled_joints = {jn:js for jn,js in jointStates.items() if jn in self.get_controlled_joints()}
-        uncontrolled_joints = {jn:js for jn,js in jointStates.items() if jn not in self.get_controlled_joints()}
-
-        super().moveToJointPoseSync(jointPositions={jn:js.position.item() for jn,js in controlled_joints.items()},
-                                velocity_scaling=1.0,
-                                acceleration_scaling=1.0,
-                                joint_position_tolerance=0.05)
+        raise NotImplementedError()
 
     def setLinksStateDirect(self, linksStates : Dict[Tuple[str,str],LinkState]):
         raise NotImplementedError()
