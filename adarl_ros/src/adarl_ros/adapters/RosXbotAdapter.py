@@ -337,7 +337,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 if self._robot_interface is not None:
                     break
             except RuntimeError:
-                ggLog.error(f"{__class__}: Failed to initialize robot interface (is xbot-core running?)! Will try again in {wait_for_sec} s...")
+                ggLog.warn(f"{__class__}: Failed to initialize robot interface (is xbot-core running?)! Will try again in {wait_for_sec} s...")
                 time.sleep(wait_for_sec)
                 if time.monotonic()-t0>timeout_sec:
                     break
