@@ -232,7 +232,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                         run_asynch_while_init: bool = False,
                         asynch_run_duration: float = 1.0):
         
-        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation, walltime_factor=walltime_factor)
+        super().__init__(stepLength_sec, forced_ros_master_uri, maxObsDelay, blocking_observation, walltime_factor=walltime_factor, 
+                wait_for_simtime=is_simulated)
 
         self._run_asynch_while_init=run_asynch_while_init
         self._asynch_run_duration=asynch_run_duration
