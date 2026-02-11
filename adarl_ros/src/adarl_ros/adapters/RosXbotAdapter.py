@@ -371,6 +371,8 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         self._xbotjname_to_jid = {jname : enabled_joint_names.index(jname) for jname in enabled_joint_names}
         self._jid_to_xbotjname = {jid : jname for jname, jid in self._xbotjname_to_jid.items()}
         
+        self._jimpedance_controlled_joints_jids = th.tensor([self._xbotjname_to_jid[jn] for _, jn in self._jimpedance_controlled_joints])
+        
         joint_dev_topicname="/xbotcore/joint_device_info"
         self._jdi_subscriber = rospy.Subscriber(joint_dev_topicname, JointDeviceInfo, 
             self._joint_device_info_callback, queue_size=1)
@@ -489,8 +491,9 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
         
         self._jimpedance_controlled_joints = list(joint_names)
 
-        # also build mapping tensor for converting from xbot joint order to the adapter's
-        self._jimpedance_xbot_to_jids = th.tensor([self._xbotjname_to_jid[jn] for _, jn in self._jimpedance_controlled_joints])
+        if hasattr(self, "_xbotjname_to_jid"):
+            # also build mapping tensor for converting from xbot joint order to the adapter's
+            self._jimpedance_controlled_joints_jids = th.tensor([self._xbotjname_to_jid[jn] for _, jn in self._jimpedance_controlled_joints])
             
     @override
     def get_impedance_controlled_joints(self) -> list[tuple[str,str]]:
@@ -610,7 +613,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
                 raise RuntimeError(f"Commanded joint impedance for model different from the controlled one (asked '{model_name, jname}', but have '{self._model_name}')")
             self._commanded_joint_impedances_by_name[full_jname] = jcmd
 
-    def apply_commanded_joint_impedances(self):
+    def _apply_commanded_joint_impedances(self):
         self.apply_joint_impedances(self._commanded_joint_impedances_by_name)
         # self.apply_joint_impedances_with_ramp(self._commanded_joint_impedances_by_name) # ramp to avoid dangerous torque discontinuities
 
@@ -696,7 +699,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
     def _apply_controls(self):
         self._apply_commanded_joint_trajectories() # trajectories override positions by setting position commands
         self._apply_commanded_joint_positions() # positions override impedances by setting impedance commands
-        self.apply_commanded_joint_impedances() 
+        self._apply_commanded_joint_impedances() 
 
     @override
     def run(self, duration_sec: float):
@@ -927,7 +930,7 @@ class RosXbotAdapter(RosAdapter, BaseJointImpedanceAdapter, BaseJointPositionAda
 
         ref_j_pvesd = self._get_current_refs_pvesd_xbot() # in xbot order
 
-        return th.as_tensor(ref_j_pvesd[self._jimpedance_xbot_to_jids, :], device=self._torch_device, dtype=th.float32)
+        return th.as_tensor(ref_j_pvesd[self._jimpedance_controlled_joints_jids, :], device=self._torch_device, dtype=th.float32)
     
     @override
     def get_link_gravity_direction(self, requestedLinks : Sequence[tuple[str,str]] | None) -> th.Tensor:
